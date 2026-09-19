@@ -328,10 +328,17 @@ def run_planner(
     wallet.persist(persister)
 
     return {
-        "candidate_a": normalize_for_json(analysis_a),
-        "candidate_b": normalize_for_json(analysis_b),
-        "comparison": comparison_data,
-    }
+    "candidate_a": normalize_for_json(analysis_a),
+    "candidate_b": normalize_for_json(analysis_b),
+    "comparison": comparison_data,
+
+    # PSBTs are returned as Base64 strings.
+    # They remain unsigned and are not broadcast.
+    "psbts": {
+        "A": str(psbt_a),
+        "B": str(psbt_b),
+    },
+}
 
 
 def main():
