@@ -36,11 +36,15 @@ function CandidateCard({
   label,
   selected,
   onSelect,
+  onExport,
 }) {
   const transaction = candidate.transaction || {};
   const privacy = candidate.privacy || {};
   const optionality = candidate.future_optionality || {};
   const findings = candidate.findings || [];
+
+  const hasLinkabilityRisk =
+    privacy.multiple_inputs || privacy.clusters_merged;
 
   return (
     <div className={`candidate-card ${selected ? "selected" : ""}`}>
@@ -66,7 +70,9 @@ function CandidateCard({
 
         <div className="stat">
           <span>Input total</span>
-          <strong>{formatSats(transaction.inputs_total_sats)}</strong>
+          <strong>
+            {formatSats(transaction.inputs_total_sats)}
+          </strong>
         </div>
 
         <div className="stat">
@@ -86,18 +92,55 @@ function CandidateCard({
           Privacy
         </div>
 
-        <div className="privacy-pills">
-          <span>{transaction.input_count} input(s)</span>
-          <span>
-            {privacy.clusters_count ?? 0} cluster
-            {(privacy.clusters_count ?? 0) === 1 ? "" : "s"}
-          </span>
+        <div className="privacy-highlights">
+          <div className="highlight-row">
+            <span className="highlight-title">
+              {privacy.multiple_inputs
+                ? "Potential input linkability"
+                : "Single-input construction"}
+            </span>
 
-          <span>
-            {privacy.clusters_merged
-              ? "Cluster merge detected"
-              : "No cluster merge"}
-          </span>
+            <span
+              className={
+                privacy.multiple_inputs
+                  ? "highlight-status caution"
+                  : "highlight-status"
+              }
+            >
+              {privacy.multiple_inputs
+                ? "2+ inputs"
+                : "1 input"}
+            </span>
+          </div>
+
+          <div className="highlight-row">
+            <span className="highlight-title">
+              Metadata clusters
+            </span>
+
+            <span className="highlight-status">
+              {privacy.clusters_count ?? 0} cluster
+              {(privacy.clusters_count ?? 0) === 1 ? "" : "s"}
+            </span>
+          </div>
+
+          <div className="highlight-row">
+            <span className="highlight-title">
+              Cluster merge
+            </span>
+
+            <span
+              className={
+                privacy.clusters_merged
+                  ? "highlight-status caution"
+                  : "highlight-status"
+              }
+            >
+              {privacy.clusters_merged
+                ? "Detected"
+                : "None detected"}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -107,40 +150,90 @@ function CandidateCard({
           Future optionality
         </div>
 
-        <p className="optional-text">
-          {optionality.rare_utxo_consumed
-            ? "This candidate consumes a tagged rare/important UTXO."
-            : "No tagged rare/important UTXO is consumed."}
-        </p>
+        <div
+          className={`optionality-box ${
+            optionality.rare_utxo_consumed
+              ? "optionality-warning"
+              : ""
+          }`}
+        >
+          {optionality.rare_utxo_consumed ? (
+            <>
+              <CircleAlert size={16} />
+              <div>
+                <strong>Rare UTXO consumed</strong>
+                <p>
+                  This candidate spends a tagged reserve
+                  coin that may be useful for future payments.
+                </p>
+              </div>
+            </>
+          ) : (
+            <>
+              <Check size={16} />
+              <div>
+                <strong>Reserve preserved</strong>
+                <p>
+                  No tagged rare or important UTXO is consumed.
+                </p>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="candidate-section">
-        <div className="section-label">
+        <button
+          className="details-toggle"
+          onClick={() => {
+            const details = document.getElementById(
+              `details-${candidate.candidate_id}`
+            );
+
+            if (details) {
+              details.hidden = !details.hidden;
+            }
+          }}
+        >
           <Shield size={15} />
-          Findings
-        </div>
+          View technical details
+          <span>+</span>
+        </button>
 
-        <div className="findings">
-          {findings.map((finding, index) => (
-            <div
-              key={`${finding.type}-${index}`}
-              className={`finding ${
-                finding.severity === "warning" ? "warning" : ""
-              }`}
-            >
-              {getFindingIcon(finding.severity)}
+        <div
+          id={`details-${candidate.candidate_id}`}
+          className="technical-details"
+          hidden
+        >
+          <div className="findings">
+            {findings.map((finding, index) => (
+              <div
+                key={`${finding.type}-${index}`}
+                className={`finding ${
+                  finding.severity === "warning"
+                    ? "warning"
+                    : ""
+                }`}
+              >
+                {getFindingIcon(finding.severity)}
 
-              <div>
-                <strong>{finding.type.replaceAll("_", " ")}</strong>
-                <p>{finding.message}</p>
+                <div>
+                  <strong>
+                    {finding.type.replaceAll("_", " ")}
+                  </strong>
+
+                  <p>{finding.message}</p>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       </div>
 
       <button
-        className={`select-button ${selected ? "selected-button" : ""}`}
+        className={`select-button ${
+          selected ? "selected-button" : ""
+        }`}
         onClick={onSelect}
       >
         {selected ? (
@@ -155,10 +248,18 @@ function CandidateCard({
           </>
         )}
       </button>
+
+      {selected && (
+        <button
+          className="download-button"
+          onClick={onExport}
+        >
+          Export Candidate {candidate.candidate_id} PSBT
+        </button>
+      )}
     </div>
   );
 }
-
 function App() {
   const [destination, setDestination] = useState(defaultDestination);
   const [amount, setAmount] = useState("3500");
