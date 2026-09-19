@@ -1,4 +1,6 @@
 def largest_first(utxos, target_sats):
+    """Select the largest UTXOs first until the target is covered."""
+
     sorted_utxos = sorted(
         utxos,
         key=lambda u: u["amount_sats"],
@@ -19,24 +21,6 @@ def largest_first(utxos, target_sats):
 
 
 def smallest_single(utxos, target_sats):
-    candidates = [
-        u
-        for u in utxos
-        if u["amount_sats"] >= target_sats
-    ]
-
-    if not candidates:
-        raise ValueError(
-            "No single UTXO can cover the target"
-        )
-
-    return [
-        min(
-            candidates,
-            key=lambda u: u["amount_sats"],
-        )
-    ]
-def smallest_single(utxos, target_sats):
     """Choose the smallest single UTXO that can cover the payment."""
 
     candidates = [
@@ -51,12 +35,14 @@ def smallest_single(utxos, target_sats):
     return [
         min(
             candidates,
-            key=lambda utxo: utxo["amount_sats"]
+            key=lambda utxo: utxo["amount_sats"],
         )
     ]
+
+
 def two_utxo_pair(utxos, target_sats, fee_reserve_sats=500):
     """
-    Find two UTXOs whose combined value comfortably covers
+    Find two UTXOs whose combined value covers
     the payment plus a small fee reserve.
     """
 
@@ -67,7 +53,10 @@ def two_utxo_pair(utxos, target_sats, fee_reserve_sats=500):
     for i in range(len(utxos)):
         for j in range(i + 1, len(utxos)):
             pair = [utxos[i], utxos[j]]
-            total = sum(u["amount_sats"] for u in pair)
+            total = sum(
+                utxo["amount_sats"]
+                for utxo in pair
+            )
 
             if total >= required:
                 if best_total is None or total < best_total:

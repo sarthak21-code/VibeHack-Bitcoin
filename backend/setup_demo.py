@@ -61,6 +61,28 @@ def create_wallet():
     return wallet, persister, address_info
 
 
+def load_existing_wallet():
+    persister = bdk.Persister.new_sqlite(str(DB_PATH))
+
+    wallet = bdk.Wallet.load(
+        descriptor=bdk.Descriptor(
+            DESCRIPTOR,
+            bdk.NetworkKind.TEST,
+        ),
+        change_descriptor=bdk.Descriptor(
+            CHANGE_DESCRIPTOR,
+            bdk.NetworkKind.TEST,
+        ),
+        persister=persister,
+    )
+
+    address_info = wallet.reveal_next_address(
+        bdk.KeychainKind.EXTERNAL
+    )
+
+    return wallet, persister, address_info
+
+
 def sync_wallet(wallet, persister):
     print("\nConnecting to Signet Esplora...")
 
@@ -91,33 +113,27 @@ def main():
     print("Network: Signet")
     print("Database:", DB_PATH)
 
+    wallet = None
+    persister = None
+    address_info = None
+
     if DB_PATH.exists():
         print("\nExisting wallet database found.")
-        print("Keeping the existing database and syncing it.")
-        persister = bdk.Persister.new_sqlite(str(DB_PATH))
 
-        wallet = bdk.Wallet.load(
-            descriptor=bdk.Descriptor(
-                DESCRIPTOR,
-                bdk.NetworkKind.TEST,
-            ),
-            change_descriptor=bdk.Descriptor(
-                CHANGE_DESCRIPTOR,
-                bdk.NetworkKind.TEST,
-            ),
-            persister=persister,
-        )
+        try:
+            print("Trying to load existing wallet...")
+            wallet, persister, address_info = load_existing_wallet()
+            print("Existing wallet loaded successfully.")
 
-        address_info = wallet.reveal_next_address(
-            bdk.KeychainKind.EXTERNAL
-        )
+        except Exception as exc:
+            print("\nExisting wallet database could not be loaded.")
+            print("Reason:", repr(exc))
+            print("Removing invalid wallet database...")
+            remove_database_files()
+            print("Creating a new watch-only BDK wallet...")
 
-    else:
-        print("\nNo wallet database found.")
-        print("Creating a new watch-only BDK wallet...")
-
+    if wallet is None:
         wallet, persister, address_info = create_wallet()
-
         print("Wallet created successfully.")
 
     print("\nDemo address:")
