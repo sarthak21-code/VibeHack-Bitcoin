@@ -95,19 +95,59 @@ function normalizeClusters(clusters) {
 }
 
 function getTradeoff(candidate) {
+  return {
+    observations: Array.isArray(candidate?.pros) ? candidate.pros : [],
+    tradeoffs: Array.isArray(candidate?.cons) ? candidate.cons : [],
+  };
+}
+
+// The backend (backend/privacy_engine/models.py) returns each candidate as
+// { candidate_id, valid, error?, transaction: {...}, privacy: {...},
+//   future_optionality: {...}, findings: [...] } and puts the per-candidate
+// pros/cons inside comparison.tradeoffs, keyed by candidate_id. This flattens
+// that shape into the fields the UI components read directly.
+function flattenCandidate(candidate, index, tradeoffsById) {
+  const candidateId =
+    candidate?.candidate_id ||
+    candidate?.id ||
+    String.fromCharCode(65 + index);
+
+  const transaction = candidate?.transaction || {};
   const privacy = candidate?.privacy || {};
-
-  const observations = Array.isArray(privacy?.observations)
-    ? privacy.observations
+  const optionality = candidate?.future_optionality || {};
+  const findings = Array.isArray(candidate?.findings)
+    ? candidate.findings
     : [];
-
-  const tradeoffs = Array.isArray(privacy?.tradeoffs)
-    ? privacy.tradeoffs
-    : [];
+  const tradeoff = tradeoffsById[candidateId] || {};
 
   return {
-    observations,
-    tradeoffs,
+    ...candidate,
+    candidate_id: candidateId,
+    valid: candidate?.valid !== false,
+    error: candidate?.error || null,
+
+    input_count: transaction.input_count ?? 0,
+    input_total_sats: transaction.inputs_total_sats ?? 0,
+    payment_sats: transaction.payment_sats ?? 0,
+    fee_sats: transaction.fee_sats ?? 0,
+    change_sats: transaction.change_sats ?? 0,
+    change_created: Boolean(transaction.change_created),
+
+    clusters: privacy.clusters_used || [],
+    clusters_count: privacy.clusters_count ?? 0,
+    clusters_merged: Boolean(privacy.clusters_merged),
+    multiple_inputs: Boolean(privacy.multiple_inputs),
+    address_reuse_detected: privacy.address_reuse_detected ?? null,
+
+    rare_utxo_consumed: Boolean(optionality.rare_utxo_consumed),
+    unique_cluster_consumed: Boolean(optionality.unique_cluster_consumed),
+
+    findings,
+    observations: findings.map((finding) => finding.message).filter(Boolean),
+
+    pros: Array.isArray(tradeoff.pros) ? tradeoff.pros : [],
+    cons: Array.isArray(tradeoff.cons) ? tradeoff.cons : [],
+    tradeoff_summary: tradeoff.summary || "",
   };
 }
 
@@ -122,13 +162,19 @@ function normalizePlannerResponse(data) {
     candidates = data.candidates.slice(0, 2);
   }
 
-  candidates = candidates.map((candidate, index) => ({
-    ...candidate,
-    candidate_id:
-      candidate?.candidate_id ||
-      candidate?.id ||
-      String.fromCharCode(65 + index),
-  }));
+  const tradeoffsById = {};
+  const rawTradeoffs = data?.comparison?.tradeoffs;
+  if (Array.isArray(rawTradeoffs)) {
+    for (const tradeoff of rawTradeoffs) {
+      if (tradeoff?.candidate_id) {
+        tradeoffsById[tradeoff.candidate_id] = tradeoff;
+      }
+    }
+  }
+
+  candidates = candidates.map((candidate, index) =>
+    flattenCandidate(candidate, index, tradeoffsById)
+  );
 
   const rawPsbts = data?.psbts || {};
 
@@ -565,6 +611,28 @@ function InfoRow({ icon, title, text }) {
 }
 
 
+// Picks the candidate with the fewest privacy/wallet trade-offs (cons) to
+// nudge undecided users, without hiding the other option or its own merits.
+function getRecommendedCandidateId(candidates) {
+  const valid = candidates.filter((candidate) => candidate?.valid !== false);
+
+  if (valid.length < 2) return null;
+
+  const sorted = [...valid].sort(
+    (a, b) => (a.cons?.length || 0) - (b.cons?.length || 0)
+  );
+
+  const [best, secondBest] = sorted;
+
+  // Only recommend when there is a clear-cut winner, not a tie.
+  if ((best.cons?.length || 0) === (secondBest.cons?.length || 0)) {
+    return null;
+  }
+
+  return best.candidate_id;
+}
+
+
 // ============================================================
 // CANDIDATE CARD
 // ============================================================
@@ -573,10 +641,10 @@ function CandidateCard({
   candidate,
   index,
   selected,
+  recommended,
   onSelect,
 }) {
-  const privacy = candidate?.privacy || {};
-  const clusters = normalizeClusters(privacy?.clusters);
+  const clusters = normalizeClusters(candidate?.clusters);
 
   const inputCount =
     candidate?.input_count ??
@@ -598,9 +666,28 @@ function CandidateCard({
     candidate?.change ??
     0;
 
-  const observations = Array.isArray(privacy?.observations)
-    ? privacy.observations
+  const observations = Array.isArray(candidate?.observations)
+    ? candidate.observations
     : [];
+
+  if (candidate?.valid === false) {
+    return (
+      <div className="rounded-[22px] border border-red-200 bg-red-50 p-7">
+        <div className="mb-4 text-xs font-bold uppercase tracking-[0.17em] text-red-500">
+          {candidateName(candidate, index)}
+        </div>
+
+        <h3 className="mb-3 text-xl font-semibold text-red-800">
+          Could not be constructed
+        </h3>
+
+        <p className="text-sm leading-6 text-red-700">
+          {candidate?.error ||
+            "This candidate is not valid under the current scenario."}
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -610,9 +697,18 @@ function CandidateCard({
           : "border-[#dce4ed] shadow-sm"
       }`}
     >
-      <div className="mb-6 flex items-center justify-between">
-        <div className="text-xs font-bold uppercase tracking-[0.17em] text-[#f28a18]">
-          {candidateName(candidate, index)}
+      <div className="mb-6 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <div className="text-xs font-bold uppercase tracking-[0.17em] text-[#f28a18]">
+            {candidateName(candidate, index)}
+          </div>
+
+          {recommended && (
+            <div className="flex items-center gap-1 rounded-full bg-[#eaf2fb] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[#2d67aa]">
+              <Sparkles size={11} />
+              Suggested
+            </div>
+          )}
         </div>
 
         {selected && (
@@ -672,13 +768,13 @@ function CandidateCard({
           />
         )}
 
-        {privacy?.future_optionality && (
+        {candidate?.rare_utxo_consumed && (
           <BulletRow
             text={
               <>
                 Future optionality:
                 <strong className="ml-1 font-bold text-[#34445b]">
-                  {privacy.future_optionality}
+                  Consumes a tagged rare/reserve UTXO
                 </strong>
               </>
             }
@@ -827,6 +923,10 @@ function ComparisonScreen({
                 selected={
                   selectedId === getCandidateId(candidate, index)
                 }
+                recommended={
+                  getCandidateId(candidate, index) ===
+                  getRecommendedCandidateId(candidates)
+                }
                 onSelect={onSelect}
               />
             ))}
@@ -915,6 +1015,23 @@ function DetailsModal({
 
           <div className="grid gap-5 p-8 lg:grid-cols-2">
             {candidates.map((candidate, index) => {
+              if (candidate?.valid === false) {
+                return (
+                  <div
+                    key={getCandidateId(candidate, index)}
+                    className="rounded-2xl border border-red-200 bg-red-50 p-7"
+                  >
+                    <div className="mb-5 text-center text-xs font-bold uppercase tracking-[0.18em] text-red-500">
+                      {candidateName(candidate, index)}
+                    </div>
+                    <p className="text-center text-sm leading-6 text-red-700">
+                      {candidate?.error ||
+                        "This candidate is not valid under the current scenario."}
+                    </p>
+                  </div>
+                );
+              }
+
               const tradeoff = getTradeoff(candidate);
 
               const observations =
@@ -937,7 +1054,7 @@ function DetailsModal({
                   </div>
 
                   <div className="mb-7 text-center text-lg font-bold leading-7 text-[#34445c]">
-                    {candidate?.privacy?.strengths ||
+                    {candidate?.tradeoff_summary ||
                       "Transaction construction with explicit privacy and wallet trade-offs."}
                   </div>
 
@@ -1351,6 +1468,7 @@ function ReviewModal({
   onFinalize,
   onBroadcast,
   onDownload,
+  onCopyPsbt,
   onClose,
 }) {
   const isSigned = Boolean(signedPsbt);
@@ -1431,13 +1549,23 @@ function ReviewModal({
               {shortText(psbt, 30, 30)}
             </div>
 
-            <button
-              onClick={onDownload}
-              className="mt-4 flex items-center gap-2 text-sm font-bold text-[#2d67aa]"
-            >
-              <Download size={16} />
-              Export PSBT
-            </button>
+            <div className="mt-4 flex flex-wrap items-center gap-4">
+              <button
+                onClick={onDownload}
+                className="flex items-center gap-2 text-sm font-bold text-[#2d67aa]"
+              >
+                <Download size={16} />
+                Export PSBT
+              </button>
+
+              <button
+                onClick={() => onCopyPsbt?.(psbt)}
+                className="flex items-center gap-2 text-sm font-bold text-[#526176]"
+              >
+                <FileCheck2 size={16} />
+                Copy PSBT
+              </button>
+            </div>
           </div>
 
           {!isSigned && !isFinalized && !isBroadcast && (
@@ -1519,6 +1647,18 @@ function ReviewModal({
               <div className="mt-2 break-all font-mono text-xs text-emerald-700">
                 {broadcast?.txid || "Transaction broadcast to Signet."}
               </div>
+
+              {broadcast?.txid && (
+                <a
+                  href={`https://mempool.space/signet/tx/${broadcast.txid}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-3 inline-flex items-center gap-1.5 text-sm font-bold text-emerald-700 underline underline-offset-2"
+                >
+                  View on Signet explorer
+                  <ChevronRight size={14} />
+                </a>
+              )}
             </div>
           )}
         </div>
@@ -2037,7 +2177,7 @@ export default function App() {
         );
 
       const signedPsbt =
-        applyLedgerSignatures(
+        await applyLedgerSignatures(
           selectedPsbt,
           signatures
         );
@@ -2198,6 +2338,22 @@ export default function App() {
       );
     } finally {
       setBroadcasting(false);
+    }
+  };
+
+
+  // ==========================================================
+  // COPY PSBT
+  // ==========================================================
+
+  const handleCopyPsbt = async (psbt) => {
+    if (!psbt) return;
+
+    try {
+      await navigator.clipboard.writeText(psbt);
+      showNotice("PSBT copied to clipboard.");
+    } catch {
+      setError("Could not copy PSBT to clipboard.");
     }
   };
 
@@ -2389,6 +2545,7 @@ export default function App() {
               selectedId
             )
           }
+          onCopyPsbt={handleCopyPsbt}
           onClose={() =>
             setShowReview(false)
           }

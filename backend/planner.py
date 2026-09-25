@@ -273,6 +273,9 @@ def plan_candidates(
         analysis_a = analyze_candidate(cand_a_dict, utxo_metadata)
         norm_a = normalize_for_json(analysis_a)
         cand_a_data.update(norm_a)
+        cand_a_data["txid"] = cand_a_dict["_metadata"]["txid"]
+        cand_a_data["vsize"] = cand_a_dict["_metadata"]["vsize"]
+        cand_a_data["weight"] = cand_a_dict["_metadata"]["weight"]
         cand_a_data["valid"] = True
         psbts["A"] = str(psbt_a)
         valid_analyses.append(analysis_a)
@@ -308,6 +311,9 @@ def plan_candidates(
         analysis_b = analyze_candidate(cand_b_dict, utxo_metadata)
         norm_b = normalize_for_json(analysis_b)
         cand_b_data.update(norm_b)
+        cand_b_data["txid"] = cand_b_dict["_metadata"]["txid"]
+        cand_b_data["vsize"] = cand_b_dict["_metadata"]["vsize"]
+        cand_b_data["weight"] = cand_b_dict["_metadata"]["weight"]
         cand_b_data["valid"] = True
         psbts["B"] = str(psbt_b)
         valid_analyses.append(analysis_b)
@@ -382,11 +388,11 @@ def run_planner(
 
     if not result["candidate_a"].get("valid"):
         raise ValueError(
-    f"Candidate A could not be built: {type(exc).__name__}: {repr(exc)}"
-)
+            f"Candidate A could not be built: {result['candidate_a'].get('error')}"
+        )
     if not result["candidate_b"].get("valid"):
         raise ValueError(
-    f"Candidate B could not be built: {type(exc).__name__}: {repr(exc)}"
+            f"Candidate B could not be built: {result['candidate_b'].get('error')}"
         )
 
     print("=" * 48)

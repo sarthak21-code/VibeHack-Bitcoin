@@ -20,13 +20,19 @@ def largest_first(utxos, target_sats):
     raise ValueError("Insufficient funds")
 
 
-def smallest_single(utxos, target_sats):
-    """Choose the smallest single UTXO that can cover the payment."""
+def smallest_single(utxos, target_sats, fee_reserve_sats=500):
+    """
+    Choose the smallest single UTXO that can cover the payment plus
+    a small fee reserve, so the resulting PSBT has enough value left
+    to pay the network fee.
+    """
+
+    required = target_sats + fee_reserve_sats
 
     candidates = [
         utxo
         for utxo in utxos
-        if utxo["amount_sats"] >= target_sats
+        if utxo["amount_sats"] >= required
     ]
 
     if not candidates:
