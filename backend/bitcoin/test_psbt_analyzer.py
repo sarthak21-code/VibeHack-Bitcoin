@@ -9,18 +9,18 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from bitcoin.candidate_psbt_test import (
+from backend.bitcoin.candidate_psbt_test import (
     FEE_RATE_SAT_VB,
     TARGET_SATS,
     get_real_utxos,
     load_wallet,
 )
-from bitcoin.psbt_analyzer import analyze_psbt
-from candidate_engine.selector import largest_first, two_utxo_pair
-from privacy_engine import analyze_candidate, compare_candidates
+from backend.bitcoin.psbt_analyzer import analyze_psbt
+from backend.candidate_engine.selector import largest_first, two_utxo_pair
+from backend.privacy_engine import analyze_candidate, compare_candidates
 
 
-DB_PATH = Path(__file__).resolve().parent / "vibehack_wallet.sqlite3"
+DB_PATH = Path(__file__).resolve().parent / "coinlens_wallet.sqlite3"
 
 EXTERNAL_RECIPIENT_ADDR = (
     "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx"

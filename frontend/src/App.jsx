@@ -1,570 +1,2425 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
+  ArrowLeft,
   ArrowRight,
+  BarChart3,
   Check,
+  ChevronRight,
   CircleAlert,
-  Clock3,
-  GitCompareArrows,
+  Download,
+  FileCheck2,
+  KeyRound,
   LockKeyhole,
+  MapPin,
+  RefreshCw,
   Shield,
+  ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Wallet,
+  X,
   Zap,
 } from "lucide-react";
-import "./App.css";
 
-const API_URL = "http://127.0.0.1:8000";
+import {
+  connectLedger,
+  signCoinLensPsbt,
+  applyLedgerSignatures,
+  disconnectLedger,
+  isLedgerConnected,
+} from "./ledger";
 
-const defaultDestination =
-  "tb1pv537m7m6w0gdrcdn3mqqdpgrk3j400yrdrjwf5c9whyl2f8f4p6qg5eh2l";
+const API_URL =
+  import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+
+const DEMO_DESCRIPTOR =
+  "tr([12071a7c/86'/1'/0']tpubDCaLkqfh67Qr7ZuRrUNrCYQ54sMjHfsJ4yQSGb3aBr1yqt3yXpamRBUwnGSnyNnxQYu7rqeBiPfw3mjBcFNX4ky2vhjj9bDrGstkfUbLB9T/0/*)#z3x5097m";
+
+const DEFAULT_DESTINATION =
+  "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx";
+
+const DEFAULT_AMOUNT = "3500";
+const DEFAULT_FEE_RATE = "1";
+
+
+// ============================================================
+// HELPERS
+// ============================================================
 
 function formatSats(value) {
-  if (value === null || value === undefined) return "—";
-  return `${value.toLocaleString()} sats`;
+  const number = Number(value || 0);
+
+  return new Intl.NumberFormat("en-IN").format(number);
 }
 
-function getFindingIcon(severity) {
-  if (severity === "warning") {
-    return <CircleAlert size={16} />;
+function shortText(value, start = 8, end = 8) {
+  if (!value) return "—";
+
+  const text = String(value);
+
+  if (text.length <= start + end + 3) {
+    return text;
   }
 
-  return <Shield size={16} />;
+  return `${text.slice(0, start)}...${text.slice(-end)}`;
 }
+
+function candidateName(candidate, index = 0) {
+  return (
+    candidate?.name ||
+    candidate?.label ||
+    `Candidate ${String.fromCharCode(65 + index)}`
+  );
+}
+
+function getCandidateId(candidate, index = 0) {
+  return (
+    candidate?.candidate_id ||
+    candidate?.id ||
+    String.fromCharCode(65 + index)
+  );
+}
+
+function normalizeClusters(clusters) {
+  if (!clusters) return [];
+
+  if (Array.isArray(clusters)) {
+    return clusters;
+  }
+
+  if (typeof clusters === "string") {
+    return [clusters];
+  }
+
+  return Object.values(clusters);
+}
+
+function getTradeoff(candidate) {
+  const privacy = candidate?.privacy || {};
+
+  const observations = Array.isArray(privacy?.observations)
+    ? privacy.observations
+    : [];
+
+  const tradeoffs = Array.isArray(privacy?.tradeoffs)
+    ? privacy.tradeoffs
+    : [];
+
+  return {
+    observations,
+    tradeoffs,
+  };
+}
+
+function normalizePlannerResponse(data) {
+  let candidates = [
+    data?.candidate_a,
+    data?.candidate_b,
+  ].filter(Boolean);
+
+  // Fallback if backend ever returns candidates[] only.
+  if (!candidates.length && Array.isArray(data?.candidates)) {
+    candidates = data.candidates.slice(0, 2);
+  }
+
+  candidates = candidates.map((candidate, index) => ({
+    ...candidate,
+    candidate_id:
+      candidate?.candidate_id ||
+      candidate?.id ||
+      String.fromCharCode(65 + index),
+  }));
+
+  const rawPsbts = data?.psbts || {};
+
+  const psbts = {
+    ...rawPsbts,
+
+    A:
+      rawPsbts.A ||
+      rawPsbts.a ||
+      rawPsbts.candidate_a ||
+      rawPsbts["Candidate A"] ||
+      "",
+
+    B:
+      rawPsbts.B ||
+      rawPsbts.b ||
+      rawPsbts.candidate_b ||
+      rawPsbts["Candidate B"] ||
+      "",
+  };
+
+  return {
+    candidates,
+    comparison: data?.comparison || null,
+    psbts,
+  };
+}
+
+
+// ============================================================
+// BRAND
+// ============================================================
+
+function Brand() {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#0f2747] text-white shadow-sm">
+        <ShieldCheck size={21} />
+      </div>
+
+      <div>
+        <div className="text-lg font-bold tracking-tight text-[#10213b]">
+          CoinLens
+        </div>
+
+        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8b98aa]">
+          Secure Pre-Signing Privacy Planner
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// STATUS BAR
+// ============================================================
+
+function StatusBar({
+  ledgerConnected,
+  ledgerStatus,
+}) {
+  return (
+    <div className="flex items-center justify-between border-b border-[#e4e9ef] bg-white px-6 py-3">
+      <Brand />
+
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 rounded-full border border-[#e4e9ef] bg-[#f8fafc] px-3 py-1.5">
+          <span
+            className={`h-2 w-2 rounded-full ${
+              ledgerConnected ? "bg-emerald-500" : "bg-slate-300"
+            }`}
+          />
+
+          <span className="text-xs font-semibold text-[#526176]">
+            {ledgerConnected ? "Ledger connected" : "Watch-only mode"}
+          </span>
+        </div>
+
+        {ledgerStatus && (
+          <div className="max-w-[280px] truncate text-xs text-[#8793a5]">
+            {ledgerStatus}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// LOGIN SCREEN
+// ============================================================
+
+function LoginScreen({
+  descriptor,
+  setDescriptor,
+  onConnectDescriptor,
+  onConnectLedger,
+  onGuestDemo,
+  loading,
+  ledgerStatus,
+}) {
+  return (
+    <div className="min-h-screen bg-[#f6f8fb]">
+      <StatusBar
+        ledgerConnected={false}
+        ledgerStatus={ledgerStatus}
+      />
+
+      <main className="mx-auto flex min-h-[calc(100vh-66px)] max-w-4xl items-center justify-center px-6 py-12">
+        <div className="w-full max-w-2xl rounded-[28px] border border-[#e1e7ef] bg-white p-8 shadow-[0_25px_70px_rgba(15,39,71,0.08)] md:p-12">
+
+          <div className="mb-8 flex h-14 w-14 items-center justify-center rounded-2xl border border-[#dbe5f0] bg-[#f5f8fc] text-[#2863a8]">
+            <LockKeyhole size={25} />
+          </div>
+
+          <div className="mb-8">
+            <div className="mb-3 text-sm font-bold uppercase tracking-[0.2em] text-[#f28a18]">
+              Secure Access
+            </div>
+
+            <h1 className="text-4xl font-semibold tracking-tight text-[#162238]">
+              Welcome back.
+            </h1>
+
+            <p className="mt-3 text-base text-[#7c899c]">
+              Connect a wallet or explore the Signet demo.
+            </p>
+          </div>
+
+          <button
+            onClick={onConnectLedger}
+            disabled={loading}
+            className="group flex w-full items-center justify-between rounded-2xl bg-[#2d67aa] px-5 py-5 text-left text-white shadow-[0_15px_35px_rgba(45,103,170,0.2)] transition hover:bg-[#255d9d] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <div className="flex items-center gap-4">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/15">
+                <KeyRound size={23} />
+              </div>
+
+              <div>
+                <div className="font-bold">
+                  Connect Hardware Wallet
+                </div>
+
+                <div className="mt-1 text-sm text-blue-100">
+                  Ledger hardware signing boundary
+                </div>
+              </div>
+            </div>
+
+            <ChevronRight
+              size={23}
+              className="transition-transform group-hover:translate-x-1"
+            />
+          </button>
+
+          <div className="my-8 flex items-center gap-4">
+            <div className="h-px flex-1 bg-[#dfe5ec]" />
+
+            <span className="text-xs font-bold uppercase tracking-widest text-[#9aa5b4]">
+              OR
+            </span>
+
+            <div className="h-px flex-1 bg-[#dfe5ec]" />
+          </div>
+
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <div className="relative flex-1">
+              <Wallet
+                size={19}
+                className="absolute left-4 top-1/2 -translate-y-1/2 text-[#98a4b5]"
+              />
+
+              <input
+                value={descriptor}
+                onChange={(event) =>
+                  setDescriptor(event.target.value)
+                }
+                placeholder="Enter xpub, npub, or descriptor"
+                className="h-14 w-full rounded-xl border border-[#d8e0ea] bg-white pl-12 pr-4 text-sm text-[#1d2a3d] outline-none transition focus:border-[#2d67aa] focus:ring-4 focus:ring-blue-50"
+              />
+            </div>
+
+            <button
+              onClick={onConnectDescriptor}
+              disabled={!descriptor.trim() || loading}
+              className="h-14 rounded-xl border border-[#ccd7e4] bg-white px-7 text-sm font-bold text-[#1d3554] transition hover:bg-[#f7f9fc] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Connect
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={onGuestDemo}
+            disabled={loading}
+            className="mt-4 flex w-full items-center justify-between rounded-xl border border-[#d5dfeb] bg-[#f7f9fc] px-5 py-4 text-left transition hover:border-[#2d67aa] hover:bg-[#f1f6fc] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <div>
+              <div className="text-sm font-bold text-[#1d3554]">
+                Continue with Guest Demo
+              </div>
+              <div className="mt-1 text-xs text-[#7c899c]">
+                Use the built-in Bitcoin Signet demo wallet. No hardware wallet required.
+              </div>
+            </div>
+
+            <ChevronRight size={20} className="text-[#2d67aa]" />
+          </button>
+
+          {ledgerStatus && (
+            <div className="mt-5 rounded-xl bg-[#f7f9fc] px-4 py-3 text-sm text-[#68778b]">
+              {ledgerStatus}
+            </div>
+          )}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+
+// ============================================================
+// PLANNER SCREEN
+// ============================================================
+
+function PlannerScreen({
+  destination,
+  setDestination,
+  amount,
+  setAmount,
+  feeRate,
+  setFeeRate,
+  onPlan,
+  loading,
+  error,
+  onBack,
+}) {
+  return (
+    <div className="min-h-screen bg-[#f6f8fb]">
+      <div className="mx-auto max-w-6xl px-6 py-8">
+
+        <div className="mb-8 flex items-center justify-between">
+          <Brand />
+
+          <button
+            onClick={onBack}
+            className="flex items-center gap-2 rounded-xl border border-[#dce4ed] bg-white px-4 py-2.5 text-sm font-semibold text-[#526176] hover:bg-[#f8fafc]"
+          >
+            <ArrowLeft size={16} />
+            Back
+          </button>
+        </div>
+
+        <div className="grid gap-6 lg:grid-cols-[1.5fr_0.8fr]">
+
+          <section className="rounded-[24px] border border-[#dce4ed] bg-white p-7 shadow-sm">
+            <div className="mb-7">
+              <div className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-[#f28a18]">
+                Transaction Planner
+              </div>
+
+              <h1 className="text-3xl font-semibold tracking-tight text-[#14233a]">
+                Build before you sign.
+              </h1>
+
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-[#7a8798]">
+                CoinLens creates multiple valid transaction constructions
+                before any signature is produced.
+              </p>
+            </div>
+
+            <div className="mb-6">
+              <label className="mb-2 block text-sm font-bold text-[#35445a]">
+                Destination
+              </label>
+
+              <div className="relative">
+                <MapPin
+                  size={18}
+                  className="absolute left-4 top-1/2 -translate-y-1/2 text-[#9aa6b5]"
+                />
+
+                <input
+                  value={destination}
+                  onChange={(event) =>
+                    setDestination(event.target.value)
+                  }
+                  className="h-14 w-full rounded-xl border border-[#d8e0ea] bg-white pl-11 pr-4 font-mono text-sm text-[#25344a] outline-none focus:border-[#2d67aa] focus:ring-4 focus:ring-blue-50"
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-5 md:grid-cols-2">
+
+              <div>
+                <label className="mb-2 block text-sm font-bold text-[#35445a]">
+                  Amount
+                </label>
+
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="1"
+                    value={amount}
+                    onChange={(event) =>
+                      setAmount(event.target.value)
+                    }
+                    className="h-14 w-full rounded-xl border border-[#d8e0ea] bg-white px-4 pr-16 text-sm text-[#25344a] outline-none focus:border-[#2d67aa] focus:ring-4 focus:ring-blue-50"
+                  />
+
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-[#8c98a8]">
+                    sats
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-bold text-[#35445a]">
+                  Fee rate
+                </label>
+
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="1"
+                    value={feeRate}
+                    onChange={(event) =>
+                      setFeeRate(event.target.value)
+                    }
+                    className="h-14 w-full rounded-xl border border-[#d8e0ea] bg-white px-4 pr-20 text-sm text-[#25344a] outline-none focus:border-[#2d67aa] focus:ring-4 focus:ring-blue-50"
+                  />
+
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-[#8c98a8]">
+                    sat/vB
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {error && (
+              <div className="mt-6 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                <CircleAlert size={18} className="mt-0.5 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            <button
+              onClick={onPlan}
+              disabled={loading}
+              className="mt-7 flex h-14 w-full items-center justify-center gap-3 rounded-xl bg-[#2d67aa] text-sm font-bold text-white shadow-[0_12px_25px_rgba(45,103,170,0.18)] transition hover:bg-[#255d9d] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {loading ? (
+                <>
+                  <RefreshCw size={18} className="animate-spin" />
+                  Building candidates...
+                </>
+              ) : (
+                <>
+                  Plan Transaction
+                  <ArrowRight size={19} />
+                </>
+              )}
+            </button>
+          </section>
+
+          <section className="rounded-[24px] border border-[#dce4ed] bg-[#f9fbfd] p-7">
+            <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-xl bg-[#eaf2fb] text-[#2d67aa]">
+              <Shield size={21} />
+            </div>
+
+            <h2 className="text-xl font-semibold text-[#1b2b42]">
+              Pre-signing privacy
+            </h2>
+
+            <p className="mt-2 text-sm leading-6 text-[#7b8798]">
+              Compare transaction construction before your wallet
+              commits a signature.
+            </p>
+
+            <div className="mt-7 space-y-4">
+              <InfoRow
+                icon={<BarChart3 size={17} />}
+                title="Multiple candidates"
+                text="Different valid UTXO selections."
+              />
+
+              <InfoRow
+                icon={<ShieldCheck size={17} />}
+                title="Privacy trade-offs"
+                text="Input linking and change implications."
+              />
+
+              <InfoRow
+                icon={<Wallet size={17} />}
+                title="Future wallet impact"
+                text="See which UTXOs are preserved or consumed."
+              />
+
+              <InfoRow
+                icon={<LockKeyhole size={17} />}
+                title="Hardware signing"
+                text="Signing stays behind the Ledger boundary."
+              />
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function InfoRow({ icon, title, text }) {
+  return (
+    <div className="flex gap-3">
+      <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-[#2d67aa] shadow-sm">
+        {icon}
+      </div>
+
+      <div>
+        <div className="text-sm font-bold text-[#36465d]">
+          {title}
+        </div>
+
+        <div className="mt-0.5 text-xs leading-5 text-[#8a96a6]">
+          {text}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// CANDIDATE CARD
+// ============================================================
 
 function CandidateCard({
   candidate,
-  label,
+  index,
   selected,
   onSelect,
-  onExport,
 }) {
-  const transaction = candidate.transaction || {};
-  const privacy = candidate.privacy || {};
-  const optionality = candidate.future_optionality || {};
-  const findings = candidate.findings || [];
+  const privacy = candidate?.privacy || {};
+  const clusters = normalizeClusters(privacy?.clusters);
 
-  const hasLinkabilityRisk =
-    privacy.multiple_inputs || privacy.clusters_merged;
+  const inputCount =
+    candidate?.input_count ??
+    candidate?.inputs?.length ??
+    0;
+
+  const inputTotal =
+    candidate?.input_total_sats ??
+    candidate?.input_total ??
+    0;
+
+  const fee =
+    candidate?.fee_sats ??
+    candidate?.fee ??
+    0;
+
+  const change =
+    candidate?.change_sats ??
+    candidate?.change ??
+    0;
+
+  const observations = Array.isArray(privacy?.observations)
+    ? privacy.observations
+    : [];
 
   return (
-    <div className={`candidate-card ${selected ? "selected" : ""}`}>
-      <div className="candidate-top">
-        <div>
-          <div className="eyebrow">{label}</div>
-          <h2>Candidate {candidate.candidate_id}</h2>
+    <div
+      className={`rounded-[22px] border bg-white p-7 transition ${
+        selected
+          ? "border-[#2d67aa] shadow-[0_15px_40px_rgba(45,103,170,0.12)]"
+          : "border-[#dce4ed] shadow-sm"
+      }`}
+    >
+      <div className="mb-6 flex items-center justify-between">
+        <div className="text-xs font-bold uppercase tracking-[0.17em] text-[#f28a18]">
+          {candidateName(candidate, index)}
         </div>
 
         {selected && (
-          <div className="selected-badge">
-            <Check size={14} />
+          <div className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
+            <Check size={13} />
             Selected
           </div>
         )}
       </div>
 
-      <div className="stats-grid">
-        <div className="stat">
-          <span>Inputs</span>
-          <strong>{transaction.input_count}</strong>
-        </div>
+      <h3 className="mb-7 text-2xl font-semibold text-[#15243a]">
+        Transaction candidate
+      </h3>
 
-        <div className="stat">
-          <span>Input total</span>
-          <strong>
-            {formatSats(transaction.inputs_total_sats)}
-          </strong>
-        </div>
+      <div className="grid grid-cols-4 gap-3">
+        <Metric
+          label="Inputs"
+          value={inputCount}
+        />
 
-        <div className="stat">
-          <span>Fee</span>
-          <strong>{formatSats(transaction.fee_sats)}</strong>
-        </div>
+        <Metric
+          label="Input total"
+          value={`${formatSats(inputTotal)} sats`}
+        />
 
-        <div className="stat">
-          <span>Change</span>
-          <strong>{formatSats(transaction.change_sats)}</strong>
-        </div>
+        <Metric
+          label="Fee"
+          value={`${formatSats(fee)} sats`}
+        />
+
+        <Metric
+          label="Change"
+          value={`${formatSats(change)} sats`}
+        />
       </div>
 
-      <div className="candidate-section">
-        <div className="section-label">
-          <LockKeyhole size={15} />
-          Privacy
-        </div>
+      <div className="my-7 h-px bg-[#edf1f5]" />
 
-        <div className="privacy-highlights">
-          <div className="highlight-row">
-            <span className="highlight-title">
-              {privacy.multiple_inputs
-                ? "Potential input linkability"
-                : "Single-input construction"}
-            </span>
+      <div className="space-y-3">
+        {observations.slice(0, 3).map((observation, observationIndex) => (
+          <BulletRow
+            key={observationIndex}
+            text={observation}
+          />
+        ))}
 
-            <span
-              className={
-                privacy.multiple_inputs
-                  ? "highlight-status caution"
-                  : "highlight-status"
-              }
-            >
-              {privacy.multiple_inputs
-                ? "2+ inputs"
-                : "1 input"}
-            </span>
-          </div>
-
-          <div className="highlight-row">
-            <span className="highlight-title">
-              Metadata clusters
-            </span>
-
-            <span className="highlight-status">
-              {privacy.clusters_count ?? 0} cluster
-              {(privacy.clusters_count ?? 0) === 1 ? "" : "s"}
-            </span>
-          </div>
-
-          <div className="highlight-row">
-            <span className="highlight-title">
-              Cluster merge
-            </span>
-
-            <span
-              className={
-                privacy.clusters_merged
-                  ? "highlight-status caution"
-                  : "highlight-status"
-              }
-            >
-              {privacy.clusters_merged
-                ? "Detected"
-                : "None detected"}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <div className="candidate-section">
-        <div className="section-label">
-          <Clock3 size={15} />
-          Future optionality
-        </div>
-
-        <div
-          className={`optionality-box ${
-            optionality.rare_utxo_consumed
-              ? "optionality-warning"
-              : ""
-          }`}
-        >
-          {optionality.rare_utxo_consumed ? (
-            <>
-              <CircleAlert size={16} />
-              <div>
-                <strong>Rare UTXO consumed</strong>
-                <p>
-                  This candidate spends a tagged reserve
-                  coin that may be useful for future payments.
-                </p>
-              </div>
-            </>
-          ) : (
-            <>
-              <Check size={16} />
-              <div>
-                <strong>Reserve preserved</strong>
-                <p>
-                  No tagged rare or important UTXO is consumed.
-                </p>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      <div className="candidate-section">
-        <button
-          className="details-toggle"
-          onClick={() => {
-            const details = document.getElementById(
-              `details-${candidate.candidate_id}`
-            );
-
-            if (details) {
-              details.hidden = !details.hidden;
+        {clusters.length > 0 && (
+          <BulletRow
+            text={
+              <>
+                Cluster:
+                <strong className="ml-1 font-bold text-[#34445b]">
+                  {clusters.join(", ")}
+                </strong>
+              </>
             }
-          }}
-        >
-          <Shield size={15} />
-          View technical details
-          <span>+</span>
-        </button>
+          />
+        )}
 
-        <div
-          id={`details-${candidate.candidate_id}`}
-          className="technical-details"
-          hidden
-        >
-          <div className="findings">
-            {findings.map((finding, index) => (
-              <div
-                key={`${finding.type}-${index}`}
-                className={`finding ${
-                  finding.severity === "warning"
-                    ? "warning"
-                    : ""
-                }`}
-              >
-                {getFindingIcon(finding.severity)}
-
-                <div>
-                  <strong>
-                    {finding.type.replaceAll("_", " ")}
-                  </strong>
-
-                  <p>{finding.message}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        {privacy?.future_optionality && (
+          <BulletRow
+            text={
+              <>
+                Future optionality:
+                <strong className="ml-1 font-bold text-[#34445b]">
+                  {privacy.future_optionality}
+                </strong>
+              </>
+            }
+            accent
+          />
+        )}
       </div>
 
       <button
-        className={`select-button ${
-          selected ? "selected-button" : ""
+        onClick={() => onSelect(getCandidateId(candidate, index))}
+        className={`mt-7 flex h-13 w-full items-center justify-center gap-2 rounded-xl border text-sm font-bold transition ${
+          selected
+            ? "border-[#2d67aa] bg-[#2d67aa] text-white"
+            : "border-[#d8e1eb] bg-[#f8fafc] text-[#34445c] hover:bg-[#f1f5f9]"
         }`}
-        onClick={onSelect}
       >
-        {selected ? (
-          <>
-            <Check size={18} />
-            Candidate selected
-          </>
-        ) : (
-          <>
-            Choose Candidate {candidate.candidate_id}
-            <ArrowRight size={18} />
-          </>
-        )}
+        {selected ? "Selected candidate" : "Choose candidate"}
+        <ArrowRight size={17} />
       </button>
-
-      {selected && (
-        <button
-          className="download-button"
-          onClick={onExport}
-        >
-          Export Candidate {candidate.candidate_id} PSBT
-        </button>
-      )}
     </div>
   );
 }
-function App() {
-  const [destination, setDestination] = useState(defaultDestination);
-  const [amount, setAmount] = useState("3500");
-  const [feeRate, setFeeRate] = useState("1");
 
-  const [result, setResult] = useState(null);
-  const [selectedCandidate, setSelectedCandidate] = useState(null);
+
+function Metric({ label, value }) {
+  return (
+    <div>
+      <div className="mb-2 text-center text-[11px] font-semibold text-[#8b98aa]">
+        {label}
+      </div>
+
+      <div className="text-center text-sm font-bold text-[#1c2d45]">
+        {value}
+      </div>
+    </div>
+  );
+}
+
+
+function BulletRow({ text, accent = false }) {
+  return (
+    <div className="flex items-start gap-3 text-sm leading-5 text-[#68778c]">
+      <span
+        className={`mt-2 h-1.5 w-1.5 shrink-0 rounded-full ${
+          accent ? "bg-[#f28a18]" : "bg-[#5a87b7]"
+        }`}
+      />
+
+      <span>{text}</span>
+    </div>
+  );
+}
+
+
+// ============================================================
+// COMPARISON SCREEN
+// ============================================================
+
+function ComparisonScreen({
+  candidates,
+  comparison,
+  selectedId,
+  onSelect,
+  onBack,
+  onDetails,
+  onWhatIf,
+  scenarioLabel,
+  ledgerConnected,
+}) {
+  return (
+    <div className="min-h-screen bg-[#f6f8fb]">
+      <div className="mx-auto max-w-7xl px-6 py-8">
+
+        <div className="mb-8 flex items-center justify-between">
+          <Brand />
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onBack}
+              className="flex items-center gap-2 rounded-xl border border-[#dce4ed] bg-white px-4 py-2.5 text-sm font-semibold text-[#526176] hover:bg-[#f8fafc]"
+            >
+              <ArrowLeft size={16} />
+              Back
+            </button>
+
+            <div className="flex items-center gap-2 rounded-full border border-[#dce4ed] bg-white px-3 py-2 text-xs font-semibold text-[#66758a]">
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  ledgerConnected
+                    ? "bg-emerald-500"
+                    : "bg-slate-300"
+                }`}
+              />
+              {ledgerConnected
+                ? "Ledger ready"
+                : "Watch-only"}
+            </div>
+          </div>
+        </div>
+
+        <div className="mb-8">
+          <div className="mb-3 text-xs font-bold uppercase tracking-[0.2em] text-[#f28a18]">
+            Transaction Comparison
+          </div>
+
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+            <div>
+              <h1 className="text-4xl font-semibold tracking-tight text-[#14233a]">
+                Choose how the payment is constructed.
+              </h1>
+
+              <p className="mt-3 text-base text-[#7c899c]">
+                {scenarioLabel
+                  ? `What-If scenario: ${scenarioLabel}. Compare the resulting transaction constructions.`
+                  : "Same payment. Different inputs. Different privacy and future-wallet trade-offs."}
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={onWhatIf}
+                className="flex items-center justify-center gap-2 rounded-xl border border-[#2d67aa] bg-white px-5 py-3 text-sm font-bold text-[#2d67aa] transition hover:bg-[#f2f7fc]"
+              >
+                <SlidersHorizontal size={17} />
+                What-If Analysis
+              </button>
+
+              <button
+                onClick={onDetails}
+                className="flex items-center justify-center gap-2 rounded-xl border border-[#d7e0ea] bg-white px-5 py-3 text-sm font-bold text-[#35465d] transition hover:bg-[#f8fafc]"
+              >
+                View Detailed Comparison
+                <ChevronRight size={17} />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {candidates.length > 0 ? (
+          <div className="grid gap-6 lg:grid-cols-2">
+            {candidates.map((candidate, index) => (
+              <CandidateCard
+                key={getCandidateId(candidate, index)}
+                candidate={candidate}
+                index={index}
+                selected={
+                  selectedId === getCandidateId(candidate, index)
+                }
+                onSelect={onSelect}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-[#dce4ed] bg-white p-10 text-center">
+            <CircleAlert className="mx-auto mb-3 text-amber-500" />
+            <p className="text-sm text-[#68778c]">
+              No candidates were returned.
+            </p>
+          </div>
+        )}
+
+        {comparison && (
+          <div className="mt-6 rounded-2xl border border-[#dce4ed] bg-white p-6">
+            <div className="flex items-start gap-3">
+              <Sparkles
+                size={19}
+                className="mt-0.5 text-[#f28a18]"
+              />
+
+              <div>
+                <div className="text-sm font-bold text-[#34445a]">
+                  CoinLens comparison
+                </div>
+
+                <div className="mt-1 text-sm leading-6 text-[#7c899c]">
+                  {typeof comparison === "string"
+                    ? comparison
+                    : comparison?.summary ||
+                      comparison?.recommendation ||
+                      "Compare the candidates before signing."}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// DETAILS MODAL
+// ============================================================
+
+function DetailsModal({
+  candidates,
+  comparison,
+  onClose,
+}) {
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-[#12223a]/45 p-4 backdrop-blur-sm">
+      <div className="mx-auto min-h-full max-w-7xl py-5">
+        <div className="overflow-hidden rounded-[24px] border border-white/70 bg-white shadow-2xl">
+
+          <div className="flex items-start justify-between border-b border-[#e5eaf0] px-8 py-7">
+            <div>
+              <div className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-[#f28a18]">
+                Window 03
+              </div>
+
+              <h2 className="text-3xl font-semibold text-[#17263c]">
+                Detailed trade-offs
+              </h2>
+            </div>
+
+            <button
+              onClick={onClose}
+              className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#dce4ed] text-[#66758a] hover:bg-[#f7f9fc]"
+            >
+              <X size={21} />
+            </button>
+          </div>
+
+          {comparison && (
+            <div className="border-b border-[#e5eaf0] px-8 py-7 text-center text-sm leading-6 text-[#68778c]">
+              {typeof comparison === "string"
+                ? comparison
+                : comparison?.summary ||
+                  comparison?.recommendation ||
+                  "Candidate comparison generated from the current transaction plan."}
+            </div>
+          )}
+
+          <div className="grid gap-5 p-8 lg:grid-cols-2">
+            {candidates.map((candidate, index) => {
+              const tradeoff = getTradeoff(candidate);
+
+              const observations =
+                tradeoff.observations.length > 0
+                  ? tradeoff.observations
+                  : [];
+
+              const tradeoffs =
+                tradeoff.tradeoffs.length > 0
+                  ? tradeoff.tradeoffs
+                  : [];
+
+              return (
+                <div
+                  key={getCandidateId(candidate, index)}
+                  className="rounded-2xl border border-[#dce4ed] bg-[#fbfcfe] p-7"
+                >
+                  <div className="mb-5 text-center text-xs font-bold uppercase tracking-[0.18em] text-[#f28a18]">
+                    {candidateName(candidate, index)}
+                  </div>
+
+                  <div className="mb-7 text-center text-lg font-bold leading-7 text-[#34445c]">
+                    {candidate?.privacy?.strengths ||
+                      "Transaction construction with explicit privacy and wallet trade-offs."}
+                  </div>
+
+                  <div className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#32825c]">
+                    <Check size={17} />
+                    Observations
+                  </div>
+
+                  <div className="space-y-3">
+                    {observations.map((item, itemIndex) => (
+                      <div
+                        key={itemIndex}
+                        className="flex items-start gap-3 text-sm leading-6 text-[#68778c]"
+                      >
+                        <span className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#e7f5ed] text-[#32825c]">
+                          +
+                        </span>
+
+                        <span>{item}</span>
+                      </div>
+                    ))}
+
+                    {observations.length === 0 && (
+                      <div className="text-sm text-[#7c899c]">
+                        No additional observations returned.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mb-3 mt-7 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#bd7419]">
+                    <CircleAlert size={17} />
+                    Trade-offs
+                  </div>
+
+                  <div className="space-y-3">
+                    {tradeoffs.map((item, itemIndex) => (
+                      <div
+                        key={itemIndex}
+                        className="flex items-start gap-3 text-sm leading-6 text-[#68778c]"
+                      >
+                        <span className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#fff1dc] text-[#bd7419]">
+                          −
+                        </span>
+
+                        <span>{item}</span>
+                      </div>
+                    ))}
+
+                    {tradeoffs.length === 0 && (
+                      <div className="text-sm text-[#7c899c]">
+                        No additional trade-offs returned.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// WHAT-IF MODAL
+// ============================================================
+
+function WhatIfModal({
+  destination,
+  amount,
+  feeRate,
+  onClose,
+  onApply,
+  loading,
+}) {
+  const [scenarioType, setScenarioType] = useState("fee");
+
+  const [feeScenario, setFeeScenario] = useState("5");
+  const [customFee, setCustomFee] = useState("");
+
+  const [paymentScenario, setPaymentScenario] =
+    useState("10");
+
+  const [customPayment, setCustomPayment] =
+    useState("");
+
+  const [preserveReserve, setPreserveReserve] =
+    useState(true);
+
+  const [maxInputs, setMaxInputs] =
+    useState("any");
+
+  const currentAmount = Number(amount || 0);
+  const currentFeeRate = Number(feeRate || 0);
+
+  const nextFeeRate =
+    feeScenario === "custom"
+      ? Number(customFee || 0)
+      : Number(feeScenario);
+
+  let nextAmount = currentAmount;
+
+  if (scenarioType === "payment") {
+    if (paymentScenario === "custom") {
+      nextAmount =
+        currentAmount + Number(customPayment || 0);
+    } else {
+      nextAmount =
+        currentAmount + Number(paymentScenario);
+    }
+  }
+
+  const scenarioLabel =
+    scenarioType === "fee"
+      ? `Fee rate: ${nextFeeRate} sat/vB`
+      : `Payment: ${formatSats(nextAmount)} sats`;
+
+  const runScenario = () => {
+    if (!destination.trim()) return;
+
+    const amountSats =
+      scenarioType === "payment"
+        ? nextAmount
+        : currentAmount;
+
+    const feeRateSatVb =
+      scenarioType === "fee"
+        ? nextFeeRate
+        : currentFeeRate;
+
+    const scenario =
+      scenarioType === "fee"
+        ? `Fee rate changed to ${feeRateSatVb} sat/vB`
+        : `Payment changed to ${formatSats(amountSats)} sats`;
+
+    onApply({
+      destination,
+      amount_sats: amountSats,
+      fee_rate_sat_vb: feeRateSatVb,
+      exclude_utxo_ids: preserveReserve
+        ? ["reserve"]
+        : [],
+      max_inputs:
+        maxInputs === "single"
+          ? 1
+          : null,
+      scenario,
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#12223a]/45 p-5 backdrop-blur-sm">
+      <div className="w-full max-w-2xl overflow-hidden rounded-[24px] border border-white/70 bg-white shadow-2xl">
+
+        <div className="flex items-start justify-between border-b border-[#e5eaf0] px-7 py-6">
+          <div>
+            <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-[#f28a18]">
+              <SlidersHorizontal size={15} />
+              What-If Analysis
+            </div>
+
+            <h2 className="text-2xl font-semibold text-[#17263c]">
+              Change the assumptions.
+            </h2>
+
+            <p className="mt-2 text-sm text-[#7b8798]">
+              Rebuild the candidates without signing anything.
+            </p>
+          </div>
+
+          <button
+            onClick={onClose}
+            disabled={loading}
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#dce4ed] text-[#66758a] hover:bg-[#f7f9fc] disabled:opacity-50"
+          >
+            <X size={19} />
+          </button>
+        </div>
+
+        <div className="space-y-6 p-7">
+
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              onClick={() => setScenarioType("fee")}
+              className={`rounded-xl border px-4 py-3 text-sm font-bold transition ${
+                scenarioType === "fee"
+                  ? "border-[#2d67aa] bg-[#eef5fc] text-[#2d67aa]"
+                  : "border-[#dce4ed] bg-white text-[#65758a]"
+              }`}
+            >
+              Change fee
+            </button>
+
+            <button
+              onClick={() => setScenarioType("payment")}
+              className={`rounded-xl border px-4 py-3 text-sm font-bold transition ${
+                scenarioType === "payment"
+                  ? "border-[#2d67aa] bg-[#eef5fc] text-[#2d67aa]"
+                  : "border-[#dce4ed] bg-white text-[#65758a]"
+              }`}
+            >
+              Change payment
+            </button>
+          </div>
+
+          {scenarioType === "fee" ? (
+            <div>
+              <label className="mb-3 block text-sm font-bold text-[#35445a]">
+                New fee rate
+              </label>
+
+              <div className="grid grid-cols-4 gap-2">
+                {["2", "5", "10", "custom"].map((option) => (
+                  <button
+                    key={option}
+                    onClick={() => setFeeScenario(option)}
+                    className={`rounded-xl border px-3 py-3 text-sm font-bold ${
+                      feeScenario === option
+                        ? "border-[#2d67aa] bg-[#eef5fc] text-[#2d67aa]"
+                        : "border-[#dce4ed] text-[#68778c]"
+                    }`}
+                  >
+                    {option === "custom"
+                      ? "Custom"
+                      : `${option} sat/vB`}
+                  </button>
+                ))}
+              </div>
+
+              {feeScenario === "custom" && (
+                <input
+                  type="number"
+                  min="1"
+                  value={customFee}
+                  onChange={(event) =>
+                    setCustomFee(event.target.value)
+                  }
+                  placeholder="Enter fee rate"
+                  className="mt-3 h-12 w-full rounded-xl border border-[#d8e0ea] px-4 text-sm outline-none focus:border-[#2d67aa]"
+                />
+              )}
+            </div>
+          ) : (
+            <div>
+              <label className="mb-3 block text-sm font-bold text-[#35445a]">
+                Increase payment by
+              </label>
+
+              <div className="grid grid-cols-4 gap-2">
+                {["10", "25", "50", "custom"].map((option) => (
+                  <button
+                    key={option}
+                    onClick={() =>
+                      setPaymentScenario(option)
+                    }
+                    className={`rounded-xl border px-3 py-3 text-sm font-bold ${
+                      paymentScenario === option
+                        ? "border-[#2d67aa] bg-[#eef5fc] text-[#2d67aa]"
+                        : "border-[#dce4ed] text-[#68778c]"
+                    }`}
+                  >
+                    {option === "custom"
+                      ? "Custom"
+                      : `+${option} sats`}
+                  </button>
+                ))}
+              </div>
+
+              {paymentScenario === "custom" && (
+                <input
+                  type="number"
+                  min="1"
+                  value={customPayment}
+                  onChange={(event) =>
+                    setCustomPayment(event.target.value)
+                  }
+                  placeholder="Additional sats"
+                  className="mt-3 h-12 w-full rounded-xl border border-[#d8e0ea] px-4 text-sm outline-none focus:border-[#2d67aa]"
+                />
+              )}
+            </div>
+          )}
+
+          <div className="rounded-xl border border-[#e2e8ef] bg-[#f8fafc] p-4">
+            <label className="flex cursor-pointer items-start gap-3">
+              <input
+                type="checkbox"
+                checked={preserveReserve}
+                onChange={(event) =>
+                  setPreserveReserve(event.target.checked)
+                }
+                className="mt-1 h-4 w-4"
+              />
+
+              <span>
+                <span className="block text-sm font-bold text-[#35445a]">
+                  Preserve tagged reserve
+                </span>
+
+                <span className="mt-1 block text-xs leading-5 text-[#7e8b9c]">
+                  Ask the planner to avoid the demo wallet's
+                  tagged reserve UTXO.
+                </span>
+              </span>
+            </label>
+          </div>
+
+          <div>
+            <label className="mb-3 block text-sm font-bold text-[#35445a]">
+              Maximum inputs
+            </label>
+
+            <select
+              value={maxInputs}
+              onChange={(event) =>
+                setMaxInputs(event.target.value)
+              }
+              className="h-12 w-full rounded-xl border border-[#d8e0ea] bg-white px-4 text-sm text-[#43536a] outline-none focus:border-[#2d67aa]"
+            >
+              <option value="any">
+                Any number of inputs
+              </option>
+
+              <option value="single">
+                Single input only
+              </option>
+            </select>
+          </div>
+
+          <div className="rounded-xl border border-[#dbe5ef] bg-[#f7fafc] p-4">
+            <div className="text-xs font-bold uppercase tracking-wider text-[#8a97a8]">
+              Scenario
+            </div>
+
+            <div className="mt-1 text-sm font-bold text-[#33445b]">
+              {scenarioLabel}
+            </div>
+          </div>
+
+          <button
+            onClick={runScenario}
+            disabled={loading}
+            className="flex h-13 w-full items-center justify-center gap-2 rounded-xl bg-[#2d67aa] text-sm font-bold text-white transition hover:bg-[#255d9d] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {loading ? (
+              <>
+                <RefreshCw
+                  size={17}
+                  className="animate-spin"
+                />
+                Rebuilding candidates...
+              </>
+            ) : (
+              <>
+                Run What-If Analysis
+                <ArrowRight size={17} />
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// DOWNLOAD PSBT
+// ============================================================
+
+function downloadPsbt(psbt, candidateId) {
+  if (!psbt) return;
+
+  const blob = new Blob([psbt], {
+    type: "text/plain;charset=utf-8",
+  });
+
+  const url = URL.createObjectURL(blob);
+
+  const anchor = document.createElement("a");
+
+  anchor.href = url;
+  anchor.download = `coinlens-candidate-${candidateId}.psbt.txt`;
+
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+
+  URL.revokeObjectURL(url);
+}
+
+
+// ============================================================
+// REVIEW MODAL
+// ============================================================
+
+function ReviewModal({
+  candidate,
+  candidateId,
+  psbt,
+  signedPsbt,
+  finalized,
+  broadcast,
+  ledgerConnected,
+  signing,
+  finalizing,
+  broadcasting,
+  onSign,
+  onFinalize,
+  onBroadcast,
+  onDownload,
+  onClose,
+}) {
+  const isSigned = Boolean(signedPsbt);
+  const isFinalized = Boolean(finalized);
+  const isBroadcast = Boolean(broadcast);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#12223a]/45 p-5 backdrop-blur-sm">
+      <div className="w-full max-w-2xl overflow-hidden rounded-[24px] bg-white shadow-2xl">
+
+        <div className="flex items-start justify-between border-b border-[#e5eaf0] px-7 py-6">
+          <div>
+            <div className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-[#f28a18]">
+              Signing Review
+            </div>
+
+            <h2 className="text-2xl font-semibold text-[#17263c]">
+              Review before signing.
+            </h2>
+          </div>
+
+          <button
+            onClick={onClose}
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#dce4ed] text-[#66758a] hover:bg-[#f7f9fc]"
+          >
+            <X size={19} />
+          </button>
+        </div>
+
+        <div className="space-y-5 p-7">
+
+          <div className="rounded-xl border border-[#dce4ed] bg-[#f8fafc] p-5">
+            <div className="text-xs font-bold uppercase tracking-wider text-[#8a97a8]">
+              Selected candidate
+            </div>
+
+            <div className="mt-2 text-lg font-bold text-[#34445a]">
+              {candidateName(candidate)}
+            </div>
+
+            <div className="mt-4 grid grid-cols-3 gap-3">
+              <Metric
+                label="Inputs"
+                value={
+                  candidate?.input_count ??
+                  candidate?.inputs?.length ??
+                  0
+                }
+              />
+
+              <Metric
+                label="Fee"
+                value={`${formatSats(
+                  candidate?.fee_sats ??
+                    candidate?.fee ??
+                    0
+                )} sats`}
+              />
+
+              <Metric
+                label="Change"
+                value={`${formatSats(
+                  candidate?.change_sats ??
+                    candidate?.change ??
+                    0
+                )} sats`}
+              />
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-[#dce4ed] p-5">
+            <div className="mb-2 flex items-center gap-2 text-sm font-bold text-[#34445a]">
+              <FileCheck2 size={17} />
+              PSBT
+            </div>
+
+            <div className="break-all font-mono text-xs leading-5 text-[#7b8798]">
+              {shortText(psbt, 30, 30)}
+            </div>
+
+            <button
+              onClick={onDownload}
+              className="mt-4 flex items-center gap-2 text-sm font-bold text-[#2d67aa]"
+            >
+              <Download size={16} />
+              Export PSBT
+            </button>
+          </div>
+
+          {!isSigned && !isFinalized && !isBroadcast && (
+            <button
+              onClick={onSign}
+              disabled={!ledgerConnected || signing}
+              className="flex h-13 w-full items-center justify-center gap-2 rounded-xl bg-[#2d67aa] text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {signing ? (
+                <>
+                  <RefreshCw
+                    size={17}
+                    className="animate-spin"
+                  />
+                  Signing with Ledger...
+                </>
+              ) : (
+                <>
+                  <KeyRound size={17} />
+                  Sign Selected Candidate
+                </>
+              )}
+            </button>
+          )}
+
+          {isSigned && !isFinalized && !isBroadcast && (
+            <button
+              onClick={onFinalize}
+              disabled={finalizing}
+              className="flex h-13 w-full items-center justify-center gap-2 rounded-xl bg-[#2d67aa] text-sm font-bold text-white disabled:opacity-50"
+            >
+              {finalizing ? (
+                <>
+                  <RefreshCw
+                    size={17}
+                    className="animate-spin"
+                  />
+                  Finalizing...
+                </>
+              ) : (
+                <>
+                  <Check size={17} />
+                  Finalize Transaction
+                </>
+              )}
+            </button>
+          )}
+
+          {isFinalized && !isBroadcast && (
+            <button
+              onClick={onBroadcast}
+              disabled={broadcasting}
+              className="flex h-13 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 text-sm font-bold text-white disabled:opacity-50"
+            >
+              {broadcasting ? (
+                <>
+                  <RefreshCw
+                    size={17}
+                    className="animate-spin"
+                  />
+                  Broadcasting...
+                </>
+              ) : (
+                <>
+                  <Zap size={17} />
+                  Broadcast to Signet
+                </>
+              )}
+            </button>
+          )}
+
+          {isBroadcast && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5">
+              <div className="flex items-center gap-2 text-sm font-bold text-emerald-700">
+                <Check size={18} />
+                Broadcast successful
+              </div>
+
+              <div className="mt-2 break-all font-mono text-xs text-emerald-700">
+                {broadcast?.txid || "Transaction broadcast to Signet."}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// MAIN APP
+// ============================================================
+
+export default function App() {
+  const [screen, setScreen] = useState("login");
+
+  const [descriptor, setDescriptor] = useState("");
+
+  const [destination, setDestination] =
+    useState(DEFAULT_DESTINATION);
+
+  const [amount, setAmount] =
+    useState(DEFAULT_AMOUNT);
+
+  const [feeRate, setFeeRate] =
+    useState(DEFAULT_FEE_RATE);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  async function planTransaction(event) {
-    event.preventDefault();
+  const [candidates, setCandidates] =
+    useState([]);
 
-    setLoading(true);
+  const [comparison, setComparison] =
+    useState(null);
+
+  const [psbts, setPsbts] =
+    useState({});
+
+  const [selectedId, setSelectedId] =
+    useState(null);
+
+  const [showDetails, setShowDetails] =
+    useState(false);
+
+  // ==========================================================
+  // WHAT-IF STATE
+  // ==========================================================
+
+  const [showWhatIf, setShowWhatIf] =
+    useState(false);
+
+  const [whatIfLoading, setWhatIfLoading] =
+    useState(false);
+
+  const [scenarioLabel, setScenarioLabel] =
+    useState("");
+
+  // ==========================================================
+  // REVIEW / LEDGER STATE
+  // ==========================================================
+
+  const [showReview, setShowReview] =
+    useState(false);
+
+  const [notice, setNotice] =
+    useState("");
+
+  const [ledgerConnected, setLedgerConnected] =
+    useState(false);
+
+  const [ledgerStatus, setLedgerStatus] =
+    useState("");
+
+  const [signedPsbts, setSignedPsbts] =
+    useState({});
+
+  const [finalizedTransactions, setFinalizedTransactions] =
+    useState({});
+
+  const [broadcastResults, setBroadcastResults] =
+    useState({});
+
+  const [signing, setSigning] =
+    useState(false);
+
+  const [finalizing, setFinalizing] =
+    useState(false);
+
+  const [broadcasting, setBroadcasting] =
+    useState(false);
+
+
+  // ==========================================================
+  // NOTICE
+  // ==========================================================
+
+  const showNotice = (message) => {
+    setNotice(message);
+
+    window.clearTimeout(
+      window.__coinlensNoticeTimer
+    );
+
+    window.__coinlensNoticeTimer =
+      window.setTimeout(() => {
+        setNotice("");
+      }, 3500);
+  };
+
+
+  // ==========================================================
+  // CLEANUP LEDGER
+  // ==========================================================
+
+  useEffect(() => {
+    return () => {
+      try {
+        disconnectLedger();
+      } catch {
+        // Ignore cleanup errors.
+      }
+    };
+  }, []);
+
+
+  // ==========================================================
+  // SELECTED CANDIDATE
+  // ==========================================================
+
+  const selectedCandidate = useMemo(() => {
+    if (!selectedId) return null;
+
+    const index = candidates.findIndex(
+      (candidate, candidateIndex) =>
+        getCandidateId(candidate, candidateIndex) ===
+        selectedId
+    );
+
+    return index >= 0
+      ? candidates[index]
+      : null;
+  }, [candidates, selectedId]);
+
+  const selectedPsbt =
+    selectedId ? psbts[selectedId] || "" : "";
+
+  const selectedSignedPsbt =
+    selectedId
+      ? signedPsbts[selectedId] || ""
+      : "";
+
+  const selectedFinalized =
+    selectedId
+      ? finalizedTransactions[selectedId] || null
+      : null;
+
+  const selectedBroadcast =
+    selectedId
+      ? broadcastResults[selectedId] || null
+      : null;
+
+
+  // ==========================================================
+  // GUEST SIGNET DEMO
+  // ==========================================================
+
+  const handleGuestDemo = () => {
     setError("");
-    setResult(null);
-    setSelectedCandidate(null);
+    setDescriptor(DEMO_DESCRIPTOR);
+    setScreen("planner");
+    showNotice("Guest Signet demo loaded.");
+  };
 
+
+  // ==========================================================
+  // CONNECT WATCH-ONLY / DESCRIPTOR
+  // ==========================================================
+
+  const handleConnectDescriptor = () => {
+    if (!descriptor.trim()) {
+      setError("Enter a wallet descriptor first.");
+      return;
+    }
+
+    setError("");
+    setScreen("planner");
+
+    showNotice("Watch-only wallet connected.");
+  };
+
+
+  // ==========================================================
+  // CONNECT LEDGER
+  // ==========================================================
+
+  const handleConnectLedger = async () => {
     try {
-      const response = await fetch(`${API_URL}/plan`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          destination,
-          amount_sats: Number(amount),
-          fee_rate_sat_vb: Number(feeRate),
-        }),
-      });
+      setError("");
+      setLedgerStatus("Connecting to Ledger...");
+      setLoading(true);
+
+      await connectLedger(
+        (status) => {
+          setLedgerStatus(status);
+        }
+      );
+
+      setLedgerConnected(
+        isLedgerConnected()
+      );
+
+      setScreen("planner");
+
+      showNotice("Ledger connected.");
+    } catch (err) {
+      setError(
+        err?.message ||
+          "Unable to connect to Ledger."
+      );
+
+      setLedgerStatus("");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+
+  // ==========================================================
+  // PLAN TRANSACTION
+  // ==========================================================
+
+  const handlePlan = async () => {
+    try {
+      setLoading(true);
+      setError("");
+      setScenarioLabel("");
+
+      const amountSats = Number(amount);
+      const feeRateSatVb = Number(feeRate);
+
+      if (!destination.trim()) {
+        throw new Error(
+          "Enter a Signet destination address."
+        );
+      }
+
+      if (!Number.isFinite(amountSats) || amountSats <= 0) {
+        throw new Error(
+          "Amount must be greater than zero."
+        );
+      }
+
+      if (
+        !Number.isFinite(feeRateSatVb) ||
+        feeRateSatVb <= 0
+      ) {
+        throw new Error(
+          "Fee rate must be greater than zero."
+        );
+      }
+
+      const response = await fetch(
+        `${API_URL}/plan`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            destination: destination.trim(),
+            amount_sats: amountSats,
+            fee_rate_sat_vb: feeRateSatVb,
+          }),
+        }
+      );
 
       const data = await response.json();
 
       if (!response.ok) {
         throw new Error(
-          data.detail || "Unable to generate transaction candidates."
+          data?.detail ||
+            data?.error ||
+            "Unable to plan transaction."
         );
       }
 
-      setResult(data);
+      const normalized =
+        normalizePlannerResponse(data);
+
+      if (!normalized.candidates.length) {
+        throw new Error(
+          "Planner returned no transaction candidates."
+        );
+      }
+
+      setCandidates(
+        normalized.candidates
+      );
+
+      setComparison(
+        normalized.comparison
+      );
+
+      setPsbts(
+        normalized.psbts
+      );
+
+      setSignedPsbts({});
+      setFinalizedTransactions({});
+      setBroadcastResults({});
+
+      setSelectedId(null);
+      setShowDetails(false);
+      setShowReview(false);
+      setShowWhatIf(false);
+
+      setScreen("comparison");
+
+      showNotice(
+        "Two transaction candidates generated."
+      );
     } catch (err) {
       setError(
-        err.message ||
-          "Could not connect to the VibeHack backend."
+        err?.message ||
+          "Transaction planning failed."
       );
     } finally {
       setLoading(false);
     }
+  };
+
+
+  // ==========================================================
+  // WHAT-IF ANALYSIS
+  // ==========================================================
+
+  const handleWhatIf = async (scenario) => {
+    try {
+      setWhatIfLoading(true);
+      setError("");
+
+      const response = await fetch(
+        `${API_URL}/what-if`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            destination:
+              scenario.destination,
+            amount_sats:
+              scenario.amount_sats,
+            fee_rate_sat_vb:
+              scenario.fee_rate_sat_vb,
+            exclude_utxo_ids:
+              scenario.exclude_utxo_ids || [],
+            max_inputs:
+              scenario.max_inputs ?? null,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.detail ||
+            data?.error ||
+            "Unable to run What-If analysis."
+        );
+      }
+
+      const normalized =
+        normalizePlannerResponse(data);
+
+      if (!normalized.candidates.length) {
+        throw new Error(
+          "What-If returned no transaction candidates."
+        );
+      }
+
+      // Replace the currently displayed candidates
+      // with the newly calculated scenario.
+      setCandidates(
+        normalized.candidates
+      );
+
+      setComparison(
+        normalized.comparison
+      );
+
+      setPsbts(
+        normalized.psbts
+      );
+
+      // Keep planner fields synchronized with
+      // the active scenario.
+      setAmount(
+        String(scenario.amount_sats)
+      );
+
+      setFeeRate(
+        String(scenario.fee_rate_sat_vb)
+      );
+
+      setScenarioLabel(
+        scenario.scenario ||
+          "What-If scenario"
+      );
+
+      // A new scenario means the previous
+      // signature state is no longer valid.
+      setSignedPsbts({});
+      setFinalizedTransactions({});
+      setBroadcastResults({});
+
+      setSelectedId(null);
+      setShowDetails(false);
+      setShowReview(false);
+      setShowWhatIf(false);
+
+      setScreen("comparison");
+
+      showNotice(
+        `What-If applied: ${
+          scenario.scenario ||
+          "scenario updated"
+        }`
+      );
+    } catch (err) {
+      setError(
+        err?.message ||
+          "What-If analysis failed."
+      );
+
+      // Keep the modal open so the user
+      // can correct the scenario.
+    } finally {
+      setWhatIfLoading(false);
+    }
+  };
+
+
+  // ==========================================================
+  // SELECT CANDIDATE
+  // ==========================================================
+
+  const handleSelectCandidate = (candidateId) => {
+    setSelectedId(candidateId);
+    setError("");
+
+    showNotice(
+      `Candidate ${candidateId} selected.`
+    );
+  };
+
+
+  // ==========================================================
+  // OPEN REVIEW
+  // ==========================================================
+
+  const handleOpenReview = () => {
+    if (!selectedId) {
+      setError(
+        "Choose a candidate before reviewing."
+      );
+      return;
+    }
+
+    if (!selectedPsbt) {
+      setError(
+        "The selected candidate does not have a PSBT."
+      );
+      return;
+    }
+
+    setError("");
+    setShowReview(true);
+  };
+
+
+  // ==========================================================
+  // SIGN SELECTED PSBT WITH LEDGER
+  // ==========================================================
+
+  const handleSignSelected = async () => {
+    if (!selectedId || !selectedPsbt) {
+      setError(
+        "Select a candidate with a PSBT first."
+      );
+      return;
+    }
+
+    if (!ledgerConnected) {
+      setError(
+        "Connect a Ledger before signing."
+      );
+      return;
+    }
+
+    try {
+      setSigning(true);
+      setError("");
+      setLedgerStatus(
+        "Preparing PSBT for Ledger signing..."
+      );
+
+      const signatures =
+        await signCoinLensPsbt(
+          selectedPsbt,
+          (status) => {
+            setLedgerStatus(status);
+          }
+        );
+
+      const signedPsbt =
+        applyLedgerSignatures(
+          selectedPsbt,
+          signatures
+        );
+
+      if (!signedPsbt) {
+        throw new Error(
+          "Ledger signing completed but no signed PSBT was returned."
+        );
+      }
+
+      setSignedPsbts((previous) => ({
+        ...previous,
+        [selectedId]: signedPsbt,
+      }));
+
+      setLedgerStatus(
+        "Ledger signature applied to PSBT."
+      );
+
+      showNotice(
+        `Candidate ${selectedId} signed.`
+      );
+    } catch (err) {
+      setError(
+        err?.message ||
+          "Ledger signing failed."
+      );
+    } finally {
+      setSigning(false);
+    }
+  };
+
+
+  // ==========================================================
+  // FINALIZE
+  // ==========================================================
+
+  const handleFinalizeSelected = async () => {
+    if (!selectedId) return;
+
+    const signedPsbt =
+      signedPsbts[selectedId];
+
+    if (!signedPsbt) {
+      setError(
+        "Sign the selected PSBT before finalizing."
+      );
+      return;
+    }
+
+    try {
+      setFinalizing(true);
+      setError("");
+
+      const response = await fetch(
+        `${API_URL}/finalize`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            psbt: signedPsbt,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok || !data?.success) {
+        throw new Error(
+          data?.detail ||
+            data?.error ||
+            "Unable to finalize transaction."
+        );
+      }
+
+      setFinalizedTransactions(
+        (previous) => ({
+          ...previous,
+          [selectedId]: data,
+        })
+      );
+
+      showNotice(
+        `Candidate ${selectedId} finalized.`
+      );
+    } catch (err) {
+      setError(
+        err?.message ||
+          "Transaction finalization failed."
+      );
+    } finally {
+      setFinalizing(false);
+    }
+  };
+
+
+  // ==========================================================
+  // BROADCAST
+  // ==========================================================
+
+  const handleBroadcastSelected = async () => {
+    if (!selectedId) return;
+
+    const finalized =
+      finalizedTransactions[selectedId];
+
+    if (!finalized?.raw_transaction_hex) {
+      setError(
+        "Finalize the transaction before broadcasting."
+      );
+      return;
+    }
+
+    try {
+      setBroadcasting(true);
+      setError("");
+
+      const response = await fetch(
+        `${API_URL}/broadcast`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            raw_transaction_hex:
+              finalized.raw_transaction_hex,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok || !data?.success) {
+        throw new Error(
+          data?.detail ||
+            data?.error ||
+            "Unable to broadcast transaction."
+        );
+      }
+
+      setBroadcastResults(
+        (previous) => ({
+          ...previous,
+          [selectedId]: data,
+        })
+      );
+
+      showNotice(
+        "Transaction broadcast to Signet."
+      );
+    } catch (err) {
+      setError(
+        err?.message ||
+          "Transaction broadcast failed."
+      );
+    } finally {
+      setBroadcasting(false);
+    }
+  };
+
+
+  // ==========================================================
+  // BACK TO PLANNER
+  // ==========================================================
+
+  const handleBackToPlanner = () => {
+    setScreen("planner");
+    setError("");
+    setShowDetails(false);
+    setShowWhatIf(false);
+    setShowReview(false);
+    setSelectedId(null);
+    setScenarioLabel("");
+  };
+
+
+  // ==========================================================
+  // LOGIN
+  // ==========================================================
+
+  if (screen === "login") {
+    return (
+      <LoginScreen
+        descriptor={descriptor}
+        setDescriptor={setDescriptor}
+        onConnectDescriptor={
+          handleConnectDescriptor
+        }
+        onConnectLedger={
+          handleConnectLedger
+        }
+        onGuestDemo={handleGuestDemo}
+        loading={loading}
+        ledgerStatus={ledgerStatus}
+      />
+    );
   }
 
-  const comparison = result?.comparison;
-  const candidateA = result?.candidate_a;
-  const candidateB = result?.candidate_b;
+
+  // ==========================================================
+  // PLANNER
+  // ==========================================================
+
+  if (screen === "planner") {
+    return (
+      <PlannerScreen
+        destination={destination}
+        setDestination={setDestination}
+        amount={amount}
+        setAmount={setAmount}
+        feeRate={feeRate}
+        setFeeRate={setFeeRate}
+        onPlan={handlePlan}
+        loading={loading}
+        error={error}
+        onBack={() => {
+          setScreen("login");
+          setError("");
+        }}
+      />
+    );
+  }
+
+
+  // ==========================================================
+  // COMPARISON
+  // ==========================================================
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div className="brand">
-          <div className="brand-mark">
-            <GitCompareArrows size={20} />
-          </div>
+    <div className="min-h-screen bg-[#f6f8fb]">
 
+      <StatusBar
+        ledgerConnected={ledgerConnected}
+        ledgerStatus={ledgerStatus}
+      />
+
+      <ComparisonScreen
+        candidates={candidates}
+        comparison={comparison}
+        selectedId={selectedId}
+        onSelect={handleSelectCandidate}
+        onBack={handleBackToPlanner}
+        onDetails={() =>
+          setShowDetails(true)
+        }
+        onWhatIf={() => {
+          setError("");
+          setShowWhatIf(true);
+        }}
+        scenarioLabel={scenarioLabel}
+        ledgerConnected={ledgerConnected}
+      />
+
+      {/* ====================================================
+          GLOBAL ERROR
+      ==================================================== */}
+
+      {error && (
+        <div className="fixed bottom-5 left-1/2 z-[80] flex max-w-xl -translate-x-1/2 items-start gap-3 rounded-xl border border-red-200 bg-white px-5 py-4 text-sm text-red-700 shadow-2xl">
+          <CircleAlert
+            size={18}
+            className="mt-0.5 shrink-0"
+          />
+
+          <span className="flex-1">
+            {error}
+          </span>
+
+          <button
+            onClick={() => setError("")}
+            className="text-red-400 hover:text-red-600"
+          >
+            <X size={17} />
+          </button>
+        </div>
+      )}
+
+      {/* ====================================================
+          NOTICE
+      ==================================================== */}
+
+      {notice && (
+        <div className="fixed right-5 top-20 z-[80] flex items-center gap-3 rounded-xl border border-emerald-200 bg-white px-5 py-3.5 text-sm font-semibold text-emerald-700 shadow-2xl">
+          <Check size={17} />
+          {notice}
+        </div>
+      )}
+
+      {/* ====================================================
+          DETAILS
+      ==================================================== */}
+
+      {showDetails && (
+        <DetailsModal
+          candidates={candidates}
+          comparison={comparison}
+          onClose={() =>
+            setShowDetails(false)
+          }
+        />
+      )}
+
+      {/* ====================================================
+          WHAT-IF
+      ==================================================== */}
+
+      {showWhatIf && (
+        <WhatIfModal
+          destination={destination}
+          amount={amount}
+          feeRate={feeRate}
+          loading={whatIfLoading}
+          onClose={() =>
+            setShowWhatIf(false)
+          }
+          onApply={handleWhatIf}
+        />
+      )}
+
+      {/* ====================================================
+          REVIEW
+      ==================================================== */}
+
+      {showReview && selectedCandidate && (
+        <ReviewModal
+          candidate={selectedCandidate}
+          candidateId={selectedId}
+          psbt={selectedPsbt}
+          signedPsbt={selectedSignedPsbt}
+          finalized={selectedFinalized}
+          broadcast={selectedBroadcast}
+          ledgerConnected={ledgerConnected}
+          signing={signing}
+          finalizing={finalizing}
+          broadcasting={broadcasting}
+          onSign={handleSignSelected}
+          onFinalize={
+            handleFinalizeSelected
+          }
+          onBroadcast={
+            handleBroadcastSelected
+          }
+          onDownload={() =>
+            downloadPsbt(
+              selectedPsbt,
+              selectedId
+            )
+          }
+          onClose={() =>
+            setShowReview(false)
+          }
+        />
+      )}
+
+      {/* ====================================================
+          SELECTED CANDIDATE ACTION BAR
+      ==================================================== */}
+
+      {selectedId && !showReview && (
+        <div className="fixed bottom-5 left-1/2 z-40 flex w-[calc(100%-32px)] max-w-2xl -translate-x-1/2 items-center justify-between gap-4 rounded-2xl border border-[#dce4ed] bg-white px-5 py-4 shadow-[0_20px_50px_rgba(15,39,71,0.16)]">
           <div>
-            <div className="brand-name">VIBEHACK</div>
-            <div className="brand-subtitle">
-              Pre-Signing Bitcoin Privacy Planner
-            </div>
-          </div>
-        </div>
-
-        <div className="status-pill">
-          <span className="status-dot" />
-          Signet
-        </div>
-      </header>
-
-      <main className="main-content">
-        <section className="hero">
-          <div className="hero-copy">
-            <div className="hero-tag">
-              <Sparkles size={15} />
-              PLAN BEFORE YOU SIGN
+            <div className="text-xs font-bold uppercase tracking-wider text-[#8b98aa]">
+              Selected
             </div>
 
-            <h1>
-              Don't just create
-              <span> a Bitcoin transaction.</span>
-              <br />
-              Compare it first.
-            </h1>
-
-            <p>
-              VibeHack generates multiple transaction candidates,
-              analyzes their privacy implications, and shows you the
-              trade-offs before anything is signed.
-            </p>
-          </div>
-
-          <div className="hero-visual">
-            <div className="orb orb-one" />
-            <div className="orb orb-two" />
-
-            <div className="visual-card">
-              <Wallet size={28} />
-              <span>UTXOs</span>
-              <strong>→ Candidates →</strong>
-              <span>PSBT</span>
-            </div>
-          </div>
-        </section>
-
-        <section className="planner-panel">
-          <div className="panel-heading">
-            <div>
-              <div className="eyebrow">TRANSACTION PLANNER</div>
-              <h2>Plan a payment</h2>
-            </div>
-
-            <div className="safe-badge">
-              <LockKeyhole size={14} />
-              Pre-signing
+            <div className="text-sm font-bold text-[#304159]">
+              Candidate {selectedId}
             </div>
           </div>
 
-          <form onSubmit={planTransaction}>
-            <div className="form-grid">
-              <label className="field field-wide">
-                <span>Destination address</span>
-                <input
-                  value={destination}
-                  onChange={(e) => setDestination(e.target.value)}
-                  placeholder="tb1p..."
-                  required
-                />
-              </label>
-
-              <label className="field">
-                <span>Amount</span>
-                <div className="input-with-unit">
-                  <input
-                    type="number"
-                    min="1"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    required
-                  />
-                  <span>sats</span>
-                </div>
-              </label>
-
-              <label className="field">
-                <span>Fee rate</span>
-                <div className="input-with-unit">
-                  <input
-                    type="number"
-                    min="1"
-                    value={feeRate}
-                    onChange={(e) => setFeeRate(e.target.value)}
-                    required
-                  />
-                  <span>sat/vB</span>
-                </div>
-              </label>
-            </div>
-
-            <button
-              className="plan-button"
-              type="submit"
-              disabled={loading}
-            >
-              {loading ? (
-                <>
-                  <div className="spinner" />
-                  Analyzing candidates...
-                </>
-              ) : (
-                <>
-                  Plan transaction
-                  <ArrowRight size={19} />
-                </>
-              )}
-            </button>
-          </form>
-
-          {error && (
-            <div className="error-box">
-              <CircleAlert size={18} />
-              <span>{error}</span>
-            </div>
-          )}
-        </section>
-
-        {result && (
-          <section className="results">
-            <div className="results-heading">
-              <div>
-                <div className="eyebrow">ANALYSIS COMPLETE</div>
-                <h2>
-                  Two ways to make the same payment.
-                </h2>
-              </div>
-
-              <div className="same-payment">
-                <Zap size={16} />
-                {formatSats(Number(amount))}
-              </div>
-            </div>
-
-            <div className="candidate-grid">
-              <CandidateCard
-                candidate={candidateA}
-                label="TWO-UTXO STRATEGY"
-                selected={selectedCandidate === "A"}
-                onSelect={() => setSelectedCandidate("A")}
-              />
-
-              <CandidateCard
-                candidate={candidateB}
-                label="LARGEST-FIRST STRATEGY"
-                selected={selectedCandidate === "B"}
-                onSelect={() => setSelectedCandidate("B")}
-              />
-            </div>
-
-            <div className="comparison-panel">
-              <div className="comparison-heading">
-                <div className="section-label">
-                  <GitCompareArrows size={17} />
-                  Candidate comparison
-                </div>
-
-                <span>Observed trade-offs</span>
-              </div>
-
-              <div className="tradeoff-grid">
-                {comparison?.tradeoffs?.map((tradeoff) => (
-                  <div
-                    className="tradeoff-card"
-                    key={tradeoff.candidate_id}
-                  >
-                    <h3>
-                      Candidate {tradeoff.candidate_id}
-                    </h3>
-
-                    <p className="tradeoff-summary">
-                      {tradeoff.summary}
-                    </p>
-
-                    <div className="tradeoff-list">
-                      {(tradeoff.pros || []).map((pro, index) => (
-                        <div className="tradeoff-item pro" key={index}>
-                          <Check size={15} />
-                          <span>{pro}</span>
-                        </div>
-                      ))}
-
-                      {(tradeoff.cons || []).map((con, index) => (
-                        <div className="tradeoff-item con" key={index}>
-                          <CircleAlert size={15} />
-                          <span>{con}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {selectedCandidate && (
-              <div className="selection-banner">
-                <div>
-                  <div className="eyebrow">READY FOR NEXT STEP</div>
-                  <strong>
-                    Candidate {selectedCandidate} selected
-                  </strong>
-                  <p>
-                    This selection is only recorded in the UI.
-                    Nothing has been signed or broadcast.
-                  </p>
-                </div>
-
-                <div className="selection-status">
-                  <Check size={18} />
-                  Pre-signing
-                </div>
-              </div>
-            )}
-          </section>
-        )}
-      </main>
-
-      <footer className="footer">
-        <div>
-          <strong>VIBEHACK</strong>
-          <span>Cypherpunk transaction planning</span>
+          <button
+            onClick={handleOpenReview}
+            className="flex items-center gap-2 rounded-xl bg-[#2d67aa] px-5 py-3 text-sm font-bold text-white hover:bg-[#255d9d]"
+          >
+            Review & Sign
+            <ArrowRight size={17} />
+          </button>
         </div>
-
-        <div className="footer-safe">
-          <Shield size={15} />
-          No signing · No broadcast
-        </div>
-      </footer>
+      )}
     </div>
   );
 }
-
-export default App;

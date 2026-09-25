@@ -8,12 +8,12 @@ if str(BACKEND_DIR) not in sys.path:
 
 import bdkpython as bdk
 
-from candidate_engine.selector import largest_first, two_utxo_pair
-from bitcoin.psbt_analyzer import analyze_psbt
-from privacy_engine import analyze_candidate, compare_candidates
+from backend.candidate_engine.selector import largest_first, two_utxo_pair
+from backend.bitcoin.psbt_analyzer import analyze_psbt
+from backend.privacy_engine import analyze_candidate, compare_candidates
 
 
-DB_PATH = Path(__file__).resolve().parent / "vibehack_wallet.sqlite3"
+DB_PATH = Path(__file__).resolve().parent / "coinlens_wallet.sqlite3"
 
 DESCRIPTOR = (
     "tr([12071a7c/86'/1'/0']"

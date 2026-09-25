@@ -1,6 +1,6 @@
 import unittest
 
-from candidate_engine.selector import (
+from backend.candidate_engine.selector import (
     largest_first,
     smallest_single,
     two_utxo_pair,

@@ -4,12 +4,16 @@ from pathlib import Path
 
 import bdkpython as bdk
 
-from bitcoin.psbt_analyzer import analyze_psbt
-from candidate_engine.selector import largest_first, two_utxo_pair
-from privacy_engine import analyze_candidate, compare_candidates
+from backend.bitcoin.psbt_analyzer import analyze_psbt
+from backend.candidate_engine.selector import (
+    largest_first,
+    two_utxo_pair,
+    smallest_single,
+)
+from backend.privacy_engine import analyze_candidate, compare_candidates
 
 
-DB_PATH = Path(__file__).resolve().parent / "bitcoin" / "vibehack_wallet.sqlite3"
+DB_PATH = Path(__file__).resolve().parent / "bitcoin" / "coinlens_wallet.sqlite3"
 
 DESCRIPTOR = (
     "tr([12071a7c/86'/1'/0']"
@@ -198,13 +202,170 @@ def print_candidate_summary(label, analysis):
     )
 
 
+def plan_candidates(
+    destination,
+    amount_sats=DEFAULT_AMOUNT_SATS,
+    fee_rate_sat_vb=DEFAULT_FEE_RATE_SAT_VB,
+    exclude_utxo_ids=None,
+    max_inputs=None,
+):
+    """
+    Core candidate planning and scenario simulation engine.
+
+    Supports deterministic 'What If' parameterization:
+    - fee_rate_sat_vb
+    - amount_sats
+    - exclude_utxo_ids (outpoint strings or 'reserve')
+    - max_inputs (e.g. 1 for single-input constraint)
+    """
+    wallet, persister = load_wallet()
+    all_utxos = get_real_utxos(wallet)
+    utxo_metadata = make_demo_metadata(all_utxos)
+
+    excluded_set = set(exclude_utxo_ids or [])
+    available_utxos = []
+    for u in all_utxos:
+        outpoint = u["outpoint_str"]
+        is_rare = utxo_metadata.get(outpoint, {}).get("rare", False)
+        if outpoint in excluded_set:
+            continue
+        if "reserve" in excluded_set and is_rare:
+            continue
+        available_utxos.append(u)
+
+    scenario_info = {
+        "destination": str(destination),
+        "amount_sats": amount_sats,
+        "fee_rate_sat_vb": fee_rate_sat_vb,
+        "exclude_utxo_ids": list(exclude_utxo_ids or []),
+        "max_inputs": max_inputs,
+    }
+
+    psbts = {}
+    valid_analyses = []
+
+    # Candidate A
+    cand_a_valid = True
+    cand_a_error = None
+    cand_a_data = {"candidate_id": "A"}
+    try:
+        if not available_utxos:
+            raise ValueError("Insufficient funds: no UTXOs available after exclusion")
+
+        if max_inputs == 1:
+            cand_a_utxos = smallest_single(available_utxos, amount_sats)
+        else:
+            cand_a_utxos = two_utxo_pair(available_utxos, amount_sats)
+
+        if max_inputs is not None and len(cand_a_utxos) > max_inputs:
+            raise ValueError(
+                f"Constraint exceeded: requires <= {max_inputs} inputs, but Candidate A selected {len(cand_a_utxos)}"
+            )
+
+        psbt_a = build_psbt(
+            wallet,
+            cand_a_utxos,
+            destination,
+            amount_sats,
+            fee_rate_sat_vb,
+        )
+        cand_a_dict = analyze_psbt(psbt_a, wallet, candidate_id="A")
+        analysis_a = analyze_candidate(cand_a_dict, utxo_metadata)
+        norm_a = normalize_for_json(analysis_a)
+        cand_a_data.update(norm_a)
+        cand_a_data["valid"] = True
+        psbts["A"] = str(psbt_a)
+        valid_analyses.append(analysis_a)
+    except Exception as exc:
+        cand_a_valid = False
+        cand_a_error = str(exc)
+        cand_a_data["valid"] = False
+        cand_a_data["error"] = cand_a_error
+
+    # Candidate B
+    cand_b_valid = True
+    cand_b_error = None
+    cand_b_data = {"candidate_id": "B"}
+    try:
+        if not available_utxos:
+            raise ValueError("Insufficient funds: no UTXOs available after exclusion")
+
+        cand_b_utxos = largest_first(available_utxos, amount_sats)
+
+        if max_inputs is not None and len(cand_b_utxos) > max_inputs:
+            raise ValueError(
+                f"Constraint exceeded: requires <= {max_inputs} inputs, but Candidate B selected {len(cand_b_utxos)}"
+            )
+
+        psbt_b = build_psbt(
+            wallet,
+            cand_b_utxos,
+            destination,
+            amount_sats,
+            fee_rate_sat_vb,
+        )
+        cand_b_dict = analyze_psbt(psbt_b, wallet, candidate_id="B")
+        analysis_b = analyze_candidate(cand_b_dict, utxo_metadata)
+        norm_b = normalize_for_json(analysis_b)
+        cand_b_data.update(norm_b)
+        cand_b_data["valid"] = True
+        psbts["B"] = str(psbt_b)
+        valid_analyses.append(analysis_b)
+    except Exception as exc:
+        cand_b_valid = False
+        cand_b_error = str(exc)
+        cand_b_data["valid"] = False
+        cand_b_data["error"] = cand_b_error
+
+    if len(valid_analyses) == 2:
+        comparison = compare_candidates(valid_analyses)
+        comparison_data = normalize_for_json(comparison)
+    elif len(valid_analyses) == 1:
+        valid_id = valid_analyses[0].candidate_id
+        invalid_id = "B" if valid_id == "A" else "A"
+        invalid_err = cand_b_error if valid_id == "A" else cand_a_error
+        comparison_data = {
+            "summary": (
+                f"Candidate {valid_id} remains valid under these scenario conditions. "
+                f"Candidate {invalid_id} is no longer valid: {invalid_err}."
+            ),
+            "tradeoffs": [
+                {
+                    "candidate_id": valid_id,
+                    "summary": f"Single valid candidate ({valid_id}) under scenario conditions.",
+                    "pros": ["Constructable under specified scenario parameters"],
+                    "cons": [],
+                }
+            ],
+        }
+    else:
+        comparison_data = {
+            "summary": (
+                f"No valid transaction candidates could be constructed under these scenario conditions. "
+                f"Candidate A: {cand_a_error}. Candidate B: {cand_b_error}."
+            ),
+            "tradeoffs": [],
+        }
+
+    wallet.persist(persister)
+
+    return {
+        "scenario": scenario_info,
+        "candidates": [cand_a_data, cand_b_data],
+        "candidate_a": cand_a_data,
+        "candidate_b": cand_b_data,
+        "comparison": comparison_data,
+        "psbts": psbts,
+    }
+
+
 def run_planner(
     destination,
     amount_sats=DEFAULT_AMOUNT_SATS,
     fee_rate_sat_vb=DEFAULT_FEE_RATE_SAT_VB,
 ):
     """
-    Run the full VibeHack planning pipeline.
+    Run the full CoinLens planning pipeline.
 
     Payment request
         -> candidate generation
@@ -213,110 +374,37 @@ def run_planner(
         -> privacy analysis
         -> candidate comparison
     """
+    result = plan_candidates(
+        destination=destination,
+        amount_sats=amount_sats,
+        fee_rate_sat_vb=fee_rate_sat_vb,
+    )
 
-    wallet, persister = load_wallet()
+    if not result["candidate_a"].get("valid"):
+        raise ValueError(
+    f"Candidate A could not be built: {type(exc).__name__}: {repr(exc)}"
+)
+    if not result["candidate_b"].get("valid"):
+        raise ValueError(
+    f"Candidate B could not be built: {type(exc).__name__}: {repr(exc)}"
+        )
 
     print("=" * 48)
-    print("VIBEHACK PRE-SIGNING BITCOIN PRIVACY PLANNER")
+    print("COINLENS PRE-SIGNING BITCOIN PRIVACY PLANNER")
     print("=" * 48)
 
-    print("Network:", wallet.network())
     print("Payment:", amount_sats, "sats")
     print("Destination:", destination)
     print("Fee rate:", fee_rate_sat_vb, "sat/vB")
 
-    utxos = get_real_utxos(wallet)
-
-    print()
-    print("Real wallet UTXOs:", len(utxos))
-
-    # Create local demonstration metadata.
-    utxo_metadata = make_demo_metadata(utxos)
-
-    # Candidate A: prefer a small two-UTXO combination.
-    candidate_a = two_utxo_pair(
-        utxos,
-        amount_sats,
-    )
-
-    # Candidate B: largest-first selection.
-    candidate_b = largest_first(
-        utxos,
-        amount_sats,
-    )
-
-    print()
-    print("Candidate A inputs:", len(candidate_a))
-    print("Candidate B inputs:", len(candidate_b))
-
-    # Build actual unsigned PSBTs.
-    psbt_a = build_psbt(
-        wallet,
-        candidate_a,
-        destination,
-        amount_sats,
-        fee_rate_sat_vb,
-    )
-
-    psbt_b = build_psbt(
-        wallet,
-        candidate_b,
-        destination,
-        amount_sats,
-        fee_rate_sat_vb,
-    )
-
-    # Convert PSBTs into structured candidate dictionaries.
-    candidate_a_dict = analyze_psbt(
-        psbt_a,
-        wallet,
-        candidate_id="A",
-    )
-
-    candidate_b_dict = analyze_psbt(
-        psbt_b,
-        wallet,
-        candidate_id="B",
-    )
-
-    # Feed structured transaction facts into the privacy engine.
-    analysis_a = analyze_candidate(
-        candidate_a_dict,
-        utxo_metadata,
-    )
-
-    analysis_b = analyze_candidate(
-        candidate_b_dict,
-        utxo_metadata,
-    )
-
-    comparison = compare_candidates(
-        [analysis_a, analysis_b]
-    )
-
-    print_candidate_summary(
-        "CANDIDATE A",
-        analysis_a,
-    )
-
-    print_candidate_summary(
-        "CANDIDATE B",
-        analysis_b,
-    )
+    print_candidate_summary("CANDIDATE A", result["candidate_a"])
+    print_candidate_summary("CANDIDATE B", result["candidate_b"])
 
     print()
     print("=" * 48)
     print("COMPARISON")
     print("=" * 48)
-
-    comparison_data = normalize_for_json(comparison)
-
-    print(
-        json.dumps(
-            comparison_data,
-            indent=2,
-        )
-    )
+    print(json.dumps(result["comparison"], indent=2))
 
     print()
     print("PSBT A generated: YES")
@@ -325,25 +413,18 @@ def run_planner(
     print("Signing: NOT PERFORMED")
     print("Broadcast: NOT PERFORMED")
 
-    wallet.persist(persister)
-
     return {
-    "candidate_a": normalize_for_json(analysis_a),
-    "candidate_b": normalize_for_json(analysis_b),
-    "comparison": comparison_data,
+        "candidate_a": result["candidate_a"],
+        "candidate_b": result["candidate_b"],
+        "comparison": result["comparison"],
+        "psbts": result["psbts"],
+    }
 
-    # PSBTs are returned as Base64 strings.
-    # They remain unsigned and are not broadcast.
-    "psbts": {
-        "A": str(psbt_a),
-        "B": str(psbt_b),
-    },
-}
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="VibeHack pre-signing Bitcoin privacy planner"
+        description="CoinLens pre-signing Bitcoin privacy planner"
     )
 
     parser.add_argument(

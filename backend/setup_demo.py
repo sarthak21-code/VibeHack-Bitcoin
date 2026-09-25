@@ -3,7 +3,7 @@ from pathlib import Path
 import bdkpython as bdk
 
 
-DB_PATH = Path(__file__).resolve().parent / "bitcoin" / "vibehack_wallet.sqlite3"
+DB_PATH = Path(__file__).resolve().parent / "bitcoin" / "coinlens_wallet.sqlite3"
 
 DESCRIPTOR = (
     "tr([12071a7c/86'/1'/0']"
@@ -108,7 +108,7 @@ def sync_wallet(wallet, persister):
 
 def main():
     print("=" * 55)
-    print("VIBEHACK DEMO WALLET SETUP")
+    print("COINLENS DEMO WALLET SETUP")
     print("=" * 55)
     print("Network: Signet")
     print("Database:", DB_PATH)

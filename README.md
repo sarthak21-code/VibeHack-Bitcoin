@@ -1,8 +1,8 @@
-# VibeHack — Pre-Signing Bitcoin Privacy Planner
+# CoinLens — Pre-Signing Bitcoin Privacy Planner
 
 > **Don't just create a Bitcoin transaction. Compare it first.**
 
-VibeHack is a pre-signing Bitcoin transaction planner that generates multiple valid transaction candidates for the same payment, analyzes their privacy-relevant trade-offs, and lets the user choose which PSBT to export and sign externally.
+CoinLens is a pre-signing Bitcoin transaction planner that generates multiple valid transaction candidates for the same payment, analyzes their privacy-relevant trade-offs, and lets the user choose which PSBT to export and sign externally.
 
 The key idea is simple:
 
@@ -10,11 +10,11 @@ The key idea is simple:
 
 ---
 
-## What VibeHack Does
+## What CoinLens Does
 
 A typical Bitcoin wallet selects UTXOs and builds a transaction.
 
-VibeHack exposes that decision **before signing**.
+CoinLens exposes that decision **before signing**.
 
 ```text
 Wallet UTXOs
@@ -38,7 +38,7 @@ Export unsigned PSBT
 Sign externally
 ```
 
-Instead of forcing the user to accept one transaction construction, VibeHack presents multiple valid alternatives and explains how their structure differs.
+Instead of forcing the user to accept one transaction construction, CoinLens presents multiple valid alternatives and explains how their structure differs.
 
 ---
 
@@ -50,11 +50,11 @@ For example, spending multiple inputs together may allow observers to apply the 
 
 Choosing a particular UTXO also affects which coins remain available for future spending.
 
-VibeHack makes these decisions visible **before the transaction is signed**.
+CoinLens makes these decisions visible **before the transaction is signed**.
 
 The goal is not to produce a single "privacy score."
 
-Instead, VibeHack generates valid alternatives and exposes their observable trade-offs so the user can make the final decision.
+Instead, CoinLens generates valid alternatives and exposes their observable trade-offs so the user can make the final decision.
 
 ---
 
@@ -62,7 +62,7 @@ Instead, VibeHack generates valid alternatives and exposes their observable trad
 
 ### 1. Multiple Transaction Candidates
 
-VibeHack generates different UTXO selections for the same payment.
+CoinLens generates different UTXO selections for the same payment.
 
 Current prototype strategies include:
 
@@ -77,7 +77,7 @@ The candidate engine is designed so additional privacy-oriented selection strate
 
 Transactions are constructed using the **Bitcoin Development Kit (BDK)**.
 
-BDK handles Bitcoin transaction and PSBT construction while VibeHack controls the candidate UTXO selection.
+BDK handles Bitcoin transaction and PSBT construction while CoinLens controls the candidate UTXO selection.
 
 This keeps Bitcoin transaction correctness separate from the privacy-analysis layer.
 
@@ -135,7 +135,7 @@ The user can compare:
 
 After comparing candidates, the user can choose one and export its unsigned `.psbt` file.
 
-**VibeHack does not sign or broadcast transactions.**
+**CoinLens does not sign or broadcast transactions.**
 
 The exported PSBT can be taken to an external signing environment.
 
@@ -147,7 +147,7 @@ Suppose the user wants to send:
 
 **3,500 sats**
 
-VibeHack can construct different valid candidates for the same payment.
+CoinLens can construct different valid candidates for the same payment.
 
 ### Candidate A
 
@@ -227,7 +227,7 @@ flowchart TD
 
 ### Design Principle
 
-VibeHack separates two responsibilities:
+CoinLens separates two responsibilities:
 
 **Bitcoin correctness**
 
@@ -396,7 +396,7 @@ The frontend communicates with the FastAPI backend running on port `8000`.
 
 ## Bitcoin Network
 
-VibeHack currently uses **Bitcoin Signet** for development and demonstration.
+CoinLens currently uses **Bitcoin Signet** for development and demonstration.
 
 This allows the project to work with real Bitcoin transaction and PSBT structures without using mainnet funds.
 
@@ -415,7 +415,7 @@ Example response:
 ```json
 {
   "status": "ok",
-  "service": "vibehack-planner"
+  "service": "coinlens-planner"
 }
 ```
 
@@ -451,7 +451,7 @@ The response contains:
 
 Multiple inputs appearing in the same transaction may be interpreted by observers as belonging to the same entity.
 
-VibeHack surfaces this as a heuristic.
+CoinLens surfaces this as a heuristic.
 
 It is **not proof of ownership**.
 
@@ -471,7 +471,7 @@ The purpose of cluster metadata in the prototype is to demonstrate how wallet kn
 
 A wallet-controlled output receiving remaining value after payment and fee can be analyzed as a likely change output.
 
-VibeHack avoids claiming certainty when the available information is insufficient.
+CoinLens avoids claiming certainty when the available information is insufficient.
 
 ---
 
@@ -479,7 +479,7 @@ VibeHack avoids claiming certainty when the available information is insufficien
 
 Address reuse analysis requires address-history metadata.
 
-When sufficient history is unavailable, VibeHack reports insufficient metadata rather than assuming that reuse did not occur.
+When sufficient history is unavailable, CoinLens reports insufficient metadata rather than assuming that reuse did not occur.
 
 ---
 
@@ -487,7 +487,7 @@ When sufficient history is unavailable, VibeHack reports insufficient metadata r
 
 A UTXO may be considered rare or important for future spending.
 
-VibeHack can warn when a candidate consumes such a UTXO.
+CoinLens can warn when a candidate consumes such a UTXO.
 
 This allows the user to consider not only the current transaction but also the future state of the wallet.
 
@@ -495,7 +495,7 @@ This allows the user to consider not only the current transaction but also the f
 
 ## Why There Is No Universal Privacy Score
 
-VibeHack intentionally avoids reducing all privacy considerations to a single number such as:
+CoinLens intentionally avoids reducing all privacy considerations to a single number such as:
 
 ```text
 Privacy = 87/100
@@ -521,13 +521,13 @@ Candidate B
 
 There is no single number that can fully represent these trade-offs.
 
-VibeHack exposes the underlying observations and leaves the decision to the user.
+CoinLens exposes the underlying observations and leaves the decision to the user.
 
 ---
 
 ## Security / Signing Boundary
 
-VibeHack is a **pre-signing planner**.
+CoinLens is a **pre-signing planner**.
 
 The prototype:
 
@@ -616,7 +616,7 @@ These limitations are deliberate parts of the current prototype scope rather tha
 
 2. Click "Plan Transaction"
 
-3. VibeHack generates multiple valid candidates
+3. CoinLens generates multiple valid candidates
 
 4. Compare:
    - inputs
@@ -693,7 +693,7 @@ These limitations are deliberate parts of the current prototype scope rather tha
 
 ## Open Source
 
-VibeHack is released as open-source software under the **MIT License**.
+CoinLens is released as open-source software under the **MIT License**.
 
 Contributions, experiments, and extensions are welcome.
 
@@ -705,7 +705,7 @@ See [`LICENSE`](LICENSE) for the full license text.
 
 Most transaction tools focus on what happened **after** a Bitcoin transaction exists.
 
-VibeHack focuses on the decision **before signing**.
+CoinLens focuses on the decision **before signing**.
 
 ```text
 Traditional flow:
@@ -719,7 +719,7 @@ Broadcast
 Analyze
 
 
-VibeHack flow:
+CoinLens flow:
 
 Payment request
        ↓
@@ -736,4 +736,4 @@ Export PSBT
 Sign externally
 ```
 
-**VibeHack turns coin selection from a hidden wallet operation into a visible user decision.**
+**CoinLens turns coin selection from a hidden wallet operation into a visible user decision.**

@@ -10,9 +10,7 @@ for consumption by Member 2's Privacy Engine:
 """
 
 from __future__ import annotations
-
 from typing import Any, Dict, List, Optional, Tuple
-
 import bdkpython as bdk
 
 
