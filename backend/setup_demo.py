@@ -1,4 +1,5 @@
 from pathlib import Path
+import sys
 
 import bdkpython as bdk
 
@@ -106,6 +107,46 @@ def sync_wallet(wallet, persister):
     wallet.persist(persister)
 
 
+def init_only():
+    """
+    Ensure the deterministic CoinLens watch-only wallet exists.
+
+    If the database does not exist, create and sync it with Signet.
+    If it already exists, leave it untouched.
+    """
+
+    print("=" * 55)
+    print("COINLENS DEMO WALLET INITIALIZATION")
+    print("=" * 55)
+    print("Network: Signet")
+    print("Database:", DB_PATH)
+
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    if DB_PATH.exists():
+        print("Wallet database already exists.")
+        return
+
+    print("Wallet database not found.")
+    print("Creating and syncing deterministic Signet wallet...")
+
+    wallet, persister, address_info = create_wallet()
+
+    print("Wallet created.")
+    print("Demo address:", address_info)
+
+    sync_wallet(wallet, persister)
+
+    balance = wallet.balance()
+
+    print("\n=== WALLET BALANCE ===")
+    print("Confirmed:", balance.confirmed.to_sat(), "sats")
+    print("Trusted:", balance.trusted_spendable.to_sat(), "sats")
+    print("Total:", balance.total.to_sat(), "sats")
+
+    print("\nWallet initialization complete.")
+
+
 def main():
     print("=" * 55)
     print("COINLENS DEMO WALLET SETUP")
@@ -171,4 +212,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if "--init-only" in sys.argv:
+        init_only()
+    else:
+        main()
