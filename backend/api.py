@@ -155,7 +155,7 @@ def plan_transaction(request: PlanRequest):
     except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail=f"Planner error: {exc}",
+            detail=f"Planner error: {type(exc).__name__}: {repr(exc)}",
         ) from exc
 
 
