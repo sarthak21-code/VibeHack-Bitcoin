@@ -1,0 +1,37 @@
+{
+  "0547f25edf05afea281257ec688146222ff85104ee847200b6ae261e3ec40f89:0": {
+    "cluster": "Alpha",
+    "label": "demo",
+    "rare": true
+  },
+  "718ef2e865e9c0d7987d12e1fa253d0c8e04e72986e2a864880d46b57502d61c:0": {
+    "cluster": "Alpha",
+    "label": "demo",
+    "rare": false
+  },
+  "718ef2e865e9c0d7987d12e1fa253d0c8e04e72986e2a864880d46b57502d61c:1": {
+    "cluster": "Alpha",
+    "label": "demo",
+    "rare": false
+  },
+  "91b4047c62a7b8b183ed8e71ebcefdad622f4f5063905cb80f63c1f2e99033d9:0": {
+    "cluster": "Alpha",
+    "label": "demo",
+    "rare": false
+  },
+  "94ddb24d3542d68b2eda568fbb5037632991d272be1c0f3e1ccd40e24e834862:0": {
+    "cluster": "Alpha",
+    "label": "demo",
+    "rare": false
+  },
+  "a8731446e7fc50bfb952502c86b28fc6994552cf7ceb17ce2408c0f20e980b9e:0": {
+    "cluster": "Beta",
+    "label": "demo_reserve",
+    "rare": true
+  },
+  "a8731446e7fc50bfb952502c86b28fc6994552cf7ceb17ce2408c0f20e980b9e:1": {
+    "cluster": "Alpha",
+    "label": "demo",
+    "rare": false
+  }
+}
